@@ -1,23 +1,22 @@
 import torch
 import torch.nn as nn
-from ultralytics.nn.modules.conv import Conv
+
 from ultralytics.nn.modules.block import PSABlock  # ← THÊM DÒNG NÀY!
+from ultralytics.nn.modules.conv import Conv
 
 __all__ = (
-    'BottleneckPruned',
-    'C3kPruned',
-    'C3k2Pruned',
-    'SPPFPruned',
-    'C2PSAPruned'  # ← THÊM DÒNG NÀY!
+    "BottleneckPruned",
+    "C2PSAPruned",  # ← THÊM DÒNG NÀY!
+    "C3k2Pruned",
+    "C3kPruned",
+    "SPPFPruned",
 )
 
 
 class BottleneckPruned(nn.Module):
-    """
-    Pruned Bottleneck block.
+    """Pruned Bottleneck block.
 
-    Khác với Bottleneck gốc, class này nhận channel sizes tuyệt đối
-    thay vì tính từ expansion ratio.
+    Khác với Bottleneck gốc, class này nhận channel sizes tuyệt đối thay vì tính từ expansion ratio.
 
     Args:
         cv1in (int): Input channels cho cv1
@@ -41,8 +40,7 @@ class BottleneckPruned(nn.Module):
 
 
 class C3kPruned(nn.Module):
-    """
-    Pruned C3k block - CSP Bottleneck with customizable kernel sizes.
+    """Pruned C3k block - CSP Bottleneck with customizable kernel sizes.
 
     C3k structure (kế thừa từ C3):
         Input ┬→ cv1(c1→c_) → Sequential Bottleneck(c_→c_) → m_out ┐
@@ -78,8 +76,7 @@ class C3kPruned(nn.Module):
         # Tất cả bottleneck đều: cv1out → cv1out (vì add=True)
         # Inner bottleneck KHÔNG được prune (ignore_bn_list)
         self.m = nn.Sequential(
-            *(BottleneckPruned(cv1out, cv1out, cv1out, shortcut, g, k=(k, k), e=1.0)
-              for _ in range(n))
+            *(BottleneckPruned(cv1out, cv1out, cv1out, shortcut, g, k=(k, k), e=1.0) for _ in range(n))
         )
 
         # Concat và final conv
@@ -100,8 +97,7 @@ class C3kPruned(nn.Module):
 
 
 class C3k2Pruned(nn.Module):
-    """
-    Pruned C3k2 block - Faster CSP implementation với C3k module.
+    """Pruned C3k2 block - Faster CSP implementation với C3k module.
 
     C3k2 structure (kế thừa từ C2f, chỉ khác m = C3k):
         Input → cv1 → chunk(2) → [left_half, right_half]
@@ -132,9 +128,22 @@ class C3k2Pruned(nn.Module):
         - C3k chain: C3k[0] nhận right_half, C3k[i] nhận output của C3k[i-1]
     """
 
-    def __init__(self, cv1in, cv1out, cv1_split_sections,
-                 c3k_cv1outs, c3k_cv2outs, c3k_cv3outs,
-                 cv2out, n=1, n_bottlenecks=2, shortcut=True, g=1, k=3, e=0.5):
+    def __init__(
+        self,
+        cv1in,
+        cv1out,
+        cv1_split_sections,
+        c3k_cv1outs,
+        c3k_cv2outs,
+        c3k_cv3outs,
+        cv2out,
+        n=1,
+        n_bottlenecks=2,
+        shortcut=True,
+        g=1,
+        k=3,
+        e=0.5,
+    ):
         super().__init__()
 
         self.cv1_split_sections = cv1_split_sections
@@ -161,7 +170,7 @@ class C3k2Pruned(nn.Module):
                     n=n_bottlenecks,
                     shortcut=shortcut,
                     g=g,
-                    k=k
+                    k=k,
                 )
             )
 
@@ -179,8 +188,7 @@ class C3k2Pruned(nn.Module):
         self.cv2 = Conv(cv2_input, cv2out, 1, 1)
 
     def forward(self, x):
-        """
-        Forward pass qua C3k2 structure.
+        """Forward pass qua C3k2 structure.
 
         Flow:
             x → cv1 → split → [left, right]
@@ -200,8 +208,7 @@ class C3k2Pruned(nn.Module):
 
 
 class SPPFPruned(nn.Module):
-    """
-    Spatial Pyramid Pooling - Fast (SPPF) layer - Pruned version.
+    """Spatial Pyramid Pooling - Fast (SPPF) layer - Pruned version.
 
     Tái sử dụng từ YOLOv8 với một số điều chỉnh cho YOLOv26:
     - Thêm param n (number of pooling iterations)
@@ -240,8 +247,7 @@ class SPPFPruned(nn.Module):
 
 
 class C2PSAPruned(nn.Module):
-    """
-    Pruned C2PSA - C2 module với PSA attention blocks.
+    """Pruned C2PSA - C2 module với PSA attention blocks.
 
     Chiến lược:
         - cv1: CÓ THỂ cắt cả input và output channels
@@ -259,17 +265,12 @@ class C2PSAPruned(nn.Module):
         cv1in (int): Input channels (từ SPPF đã cắt)
         cv1out (int): Output channels của cv1 (từ mask)
         cv1_split_sections (tuple): (left_channels, right_channels) sau split
-                                    VD: [512, 512] hoặc [480, 544] nếu prune không đều
+        VD: [512, 512] hoặc [480, 544] nếu prune không đều
         cv2out (int): Output channels của cv2 (từ mask)
         n (int): Number of PSABlock modules
         e (float): Expansion ratio (không dùng, giữ để tương thích)
 
-    Notes:
-        - cv1_split_sections[1] (right half) phải là số CHẴN vì PSABlock cần
-        - PSABlock có residual → input = output = cv1_split_sections[1]
-        - cv2 input = cv1out (concat a + b)
-
-    Example:
+    Examples:
         Model gốc:
             C2PSA(1024, 1024, n=2)
             cv1: 1024 → 2048, split: [1024, 1024]
@@ -279,6 +280,11 @@ class C2PSAPruned(nn.Module):
             C2PSAPruned(512, 1024, [512, 512], 512, n=2)
             cv1: 512 → 1024, split: [512, 512]
             cv2: 1024 → 512
+
+    Notes:
+        - cv1_split_sections[1] (right half) phải là số CHẴN vì PSABlock cần
+        - PSABlock có residual → input = output = cv1_split_sections[1]
+        - cv2 input = cv1out (concat a + b)
     """
 
     def __init__(self, cv1in, cv1out, cv1_split_sections, cv2out, n=1, e=0.5):
@@ -286,12 +292,12 @@ class C2PSAPruned(nn.Module):
 
         # Kiểm tra split sections
         assert len(cv1_split_sections) == 2, "cv1_split_sections must be [left, right]"
-        assert sum(cv1_split_sections) == cv1out, \
+        assert sum(cv1_split_sections) == cv1out, (
             f"Sum of split_sections {sum(cv1_split_sections)} must equal cv1out {cv1out}"
+        )
 
         # Right half phải chẵn (PSABlock requirement)
-        assert cv1_split_sections[1] % 2 == 0, \
-            f"Right half {cv1_split_sections[1]} must be even for PSABlock"
+        assert cv1_split_sections[1] % 2 == 0, f"Right half {cv1_split_sections[1]} must be even for PSABlock"
 
         self.cv1_split_sections = cv1_split_sections
 
@@ -304,15 +310,9 @@ class C2PSAPruned(nn.Module):
         # Input/Output = cv1_split_sections[1] (right half)
         # Dùng PSABlock GỐC từ Ultralytics
         c_psa = cv1_split_sections[1]
-        self.m = nn.Sequential(*[
-            PSABlock(
-                c=c_psa,
-                attn_ratio=0.5,
-                num_heads=max(c_psa // 64, 1),
-                shortcut=True
-            )
-            for _ in range(n)
-        ])
+        self.m = nn.Sequential(
+            *[PSABlock(c=c_psa, attn_ratio=0.5, num_heads=max(c_psa // 64, 1), shortcut=True) for _ in range(n)]
+        )
 
         # cv2: Final conv
         # Input = cv1out (concat left + right)
@@ -320,8 +320,7 @@ class C2PSAPruned(nn.Module):
         self.cv2 = Conv(cv1out, cv2out, 1)
 
     def forward(self, x):
-        """
-        Forward pass qua C2PSA structure.
+        """Forward pass qua C2PSA structure.
 
         Flow:
             x → cv1 → split([a, b])
