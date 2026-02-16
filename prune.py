@@ -2,36 +2,35 @@
 新增的代码文件:
 ultralytics/nn/modules/block_pruned.py: 新增Bottleneckpruned, C2fpruned, SPPFpruned
 ultralytics/nn/modules/head_pruned.py: 新增Detect_pruned
-ultralytics/nn/tasks_pruend.py: 新增DetectionModelPruned, parse_model_pruned
+ultralytics/nn/tasks_pruend.py: 新增DetectionModelPruned, parse_model_pruned.
 """
+
 """
 编写此部分代码, 要同时结合yolov8.yaml模型结构文件, netron下的yolo8.onnx文件一起看
 """
-import re
+import argparse
+
+# THÊM IMPORT CHO HÀM LÀM TRÒN CHIA HẾT CHO 8
 import os
+import re
 import sys
 import warnings
 from pathlib import Path
 
-import yaml
-import argparse
-
 import torch
 import torch.nn as nn
-from ultralytics.utils import colorstr
-from ultralytics.nn.modules.block import Bottleneck
-from ultralytics.nn.autobackend import AutoBackend
-from ultralytics.nn.modules import Conv, Concat
-
-from ultralytics.nn.modules.block_pruned import C2fPruned, SPPFPruned
+import yaml
 from ultralytics.nn.modules.head_pruned import DetectPruned
 from ultralytics.nn.tasks_pruned import DetectionModelPruned
 
-# THÊM IMPORT CHO HÀM LÀM TRÒN CHIA HẾT CHO 8
-import math
+from ultralytics.nn.autobackend import AutoBackend
+from ultralytics.nn.modules import Concat, Conv
+from ultralytics.nn.modules.block import Bottleneck
+from ultralytics.nn.modules.block_pruned import C2fPruned, SPPFPruned
+from ultralytics.utils import colorstr
 from ultralytics.utils.ops import make_divisible
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -41,7 +40,13 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 
 def main(opt):
-    weights, prune_ratio, cfg, model_size, save_dir = opt.weights, opt.prune_ratio, opt.cfg, opt.model_size, opt.save_dir
+    weights, prune_ratio, cfg, model_size, save_dir = (
+        opt.weights,
+        opt.prune_ratio,
+        opt.cfg,
+        opt.model_size,
+        opt.save_dir,
+    )
     model = AutoBackend(weights, fuse=False)
     model.eval()
     # =========================================step1=========================================
@@ -101,16 +106,18 @@ def main(opt):
     # 计算按照当前用户指定比率剪枝下的阈值
     thre = sorted_bn[int(len(sorted_bn) * prune_ratio)]
     print(
-        f'Pruning gamma values should be less than {colorstr(f"{highest_thre:.4f}")}, yours is {colorstr(f"{thre:.4f}")}')
+        f"Pruning gamma values should be less than {colorstr(f'{highest_thre:.4f}')}, yours is {colorstr(f'{thre:.4f}')}"
+    )
     print(
-        f'The corresponding pruing ratio should be less than {colorstr(f"{percent_limit:.3f}")}, yours is {colorstr(f"{prune_ratio:.3f}")}')
+        f"The corresponding pruing ratio should be less than {colorstr(f'{percent_limit:.3f}')}, yours is {colorstr(f'{prune_ratio:.3f}')}"
+    )
     if prune_ratio > percent_limit:
         prune_ratio = percent_limit
-        print(f'Pruing ratio falling down to {colorstr(f"{prune_ratio:.3f}")}')
+        print(f"Pruing ratio falling down to {colorstr(f'{prune_ratio:.3f}')}")
     # ========================================step6=========================================
     """将模型配置文件重新保存为一个字典(注意, 这里重写了C2f模块、SPPF模块和Detect模块)"""
     pruned_yaml = {}
-    with open(cfg, encoding='ascii', errors='ignore') as f:
+    with open(cfg, encoding="ascii", errors="ignore") as f:
         model_yamls = yaml.safe_load(f)  # model dict
     # # Define model
     nc = model.model.nc
@@ -130,22 +137,18 @@ def main(opt):
         [-1, 1, SPPFPruned, [1024, 5]],  # 9
     ]
     pruned_yaml["head"] = [
-        [-1, 1, nn.Upsample, [None, 2, 'nearest']],
+        [-1, 1, nn.Upsample, [None, 2, "nearest"]],
         [[-1, 6], 1, Concat, [1]],  # cat backbone P4
         [-1, 3, C2fPruned, [512]],  # 12
-
-        [-1, 1, nn.Upsample, [None, 2, 'nearest']],
+        [-1, 1, nn.Upsample, [None, 2, "nearest"]],
         [[-1, 4], 1, Concat, [1]],  # cat backbone P3
         [-1, 3, C2fPruned, [256]],  # 15 (P3/8-small)
-
         [-1, 1, Conv, [256, 3, 2]],
         [[-1, 12], 1, Concat, [1]],  # cat head P4
         [-1, 3, C2fPruned, [512]],  # 18 (P4/16-medium)
-
         [-1, 1, Conv, [512, 3, 2]],
         [[-1, 9], 1, Concat, [1]],  # cat head P5
         [-1, 3, C2fPruned, [1024]],  # 21 (P5/32-large)
-
         [[15, 18, 21], 1, DetectPruned, [nc]],  # Detect(P3, P4, P5)
     ]
     # ========================================step7=========================================
@@ -226,13 +229,13 @@ def main(opt):
     pattern_c2f = re.compile(r"model.\d+.m.0.cv1.bn")
     # 匹配Detect模块中的最后一个卷积层
     pattern_detect = re.compile(r"model.\d+.cv\d.\d.2")
-    for (name_org, module_org), (name_pruned, module_pruned) in \
-            zip(model.model.named_modules(), pruned_model.named_modules()):
-
+    for (name_org, module_org), (name_pruned, module_pruned) in zip(
+        model.model.named_modules(), pruned_model.named_modules()
+    ):
         assert name_org == name_pruned, f"name_org: {name_org} != name_pruned: {name_pruned}"
 
         # 如果是dfl层, 说明已经结束了
-        if 'dfl' in name_org:
+        if "dfl" in name_org:
             break
 
         # 如果是Detect模块中的最后一个卷积(不带BN层的卷积)
@@ -248,7 +251,7 @@ def main(opt):
             continue
 
         if isinstance(module_org, nn.Conv2d):
-            currnet_bn_layer_name = name_org[:-4] + 'bn'
+            currnet_bn_layer_name = name_org[:-4] + "bn"
             out_channels_mask = maskbndict[currnet_bn_layer_name].to(torch.bool)
             prev_bn_layer_name = current_to_prev.get(currnet_bn_layer_name, None)
             if isinstance(prev_bn_layer_name, list):
@@ -269,12 +272,14 @@ def main(opt):
             module_pruned.weight.data = state_dict_org
 
             # 如果断言失败, 那么说明剪枝模型构建的有问题
-            assert module_pruned.in_channels == state_dict_org.shape[1], \
-                f"{name_org} module weight mismatch, module_pruned.in_channels: {module_pruned.in_channels}, " \
+            assert module_pruned.in_channels == state_dict_org.shape[1], (
+                f"{name_org} module weight mismatch, module_pruned.in_channels: {module_pruned.in_channels}, "
                 f"state_dict_org.shape[1]: {state_dict_org.shape[1]} \n"
-            assert module_pruned.out_channels == state_dict_org.shape[0], \
-                f"{name_org} module weight mismatch, module_pruned.out_channels: {module_pruned.out_channels}, " \
+            )
+            assert module_pruned.out_channels == state_dict_org.shape[0], (
+                f"{name_org} module weight mismatch, module_pruned.out_channels: {module_pruned.out_channels}, "
                 f"state_dict_org.shape[0]: {state_dict_org.shape[0]} \n"
+            )
 
             if module_org.bias is not None:
                 assert module_pruned.bias.data is not None, f"{name_pruned} has no bias"
@@ -288,20 +293,14 @@ def main(opt):
             module_pruned.running_mean = module_org.running_mean[out_channels_mask]
             module_pruned.running_var = module_org.running_var[out_channels_mask]
     missing = [name for name in maskbndict.keys() if name not in changed]
-    assert not missing, "mising: {missing}"
+    assert not missing, "missing: {missing}"
     # ========================================step10=========================================
     """
     保存模型
     """
     pruned_model.eval()
     save_path = os.path.join(save_dir, "pruned.pt")
-    torch.save(
-        {
-            "model": pruned_model,
-            "maskbndict": maskbndict
-        },
-        save_path
-    )
+    torch.save({"model": pruned_model, "maskbndict": maskbndict}, save_path)
     model = torch.load(save_path)["model"]
 
     model = model.cuda()
@@ -311,15 +310,18 @@ def main(opt):
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data', type=str, default=ROOT / 'ultralytics/cfg/datasets/coco.yaml',
-                        help='dataset.yaml path')
-    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'runs/train-sparsity/weights/last.pt',
-                        help='model.pt path(s)')
-    parser.add_argument('--cfg', type=str, default=ROOT / 'ultralytics/cfg/models/v8/yolov8.yaml',
-                        help='model.yaml path')
-    parser.add_argument('--model-size', type=str, default='s', help='(yolov8)n, s, m, l or x?')
-    parser.add_argument('--prune-ratio', type=float, default=0.5, help='prune ratio')
-    parser.add_argument('--save-dir', type=str, default=ROOT / 'weights', help='pruned model weight save dir')
+    parser.add_argument(
+        "--data", type=str, default=ROOT / "ultralytics/cfg/datasets/coco.yaml", help="dataset.yaml path"
+    )
+    parser.add_argument(
+        "--weights", nargs="+", type=str, default=ROOT / "runs/train-sparsity/weights/last.pt", help="model.pt path(s)"
+    )
+    parser.add_argument(
+        "--cfg", type=str, default=ROOT / "ultralytics/cfg/models/v8/yolov8.yaml", help="model.yaml path"
+    )
+    parser.add_argument("--model-size", type=str, default="s", help="(yolov8)n, s, m, l or x?")
+    parser.add_argument("--prune-ratio", type=float, default=0.5, help="prune ratio")
+    parser.add_argument("--save-dir", type=str, default=ROOT / "weights", help="pruned model weight save dir")
     opt = parser.parse_args()
     return opt
 
