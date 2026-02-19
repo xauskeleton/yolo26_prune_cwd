@@ -512,7 +512,7 @@ YOLO(
         )
         (m): ModuleList(
           (0): Sequential(
-            (0): Bottleneck(
+            ( x0): Bottleneck(
               (cv1): Conv(
                 (conv): Conv2d(256, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
                 (bn): BatchNorm2d(128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
