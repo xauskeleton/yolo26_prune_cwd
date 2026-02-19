@@ -791,7 +791,7 @@ python prune.py \
 python prune.py \
     --weights runs/train-sparsity/weights/last.pt \
     --cfg ultralytics/cfg/models/v8/yolov8.yaml \
-    --prune-ratio 0.4 \
+    --prune-ratio 0.3 \
     --layer-ratio layer_ratio.\
     
 python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
