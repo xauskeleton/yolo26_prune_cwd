@@ -537,7 +537,7 @@ def main(opt):
         r"model\.\d+\.m\.0\.(cv1|cv2)\.bn"       # C3k type: first C3k's cv1/cv2
         r"|model\.\d+\.m\.0\.0\.cv1\.bn"          # Attn type: Bottleneck.cv1 in Sequential
     )
-    pattern_detect = re.compile(r"model\.\d+\.cv\d\.\d\.2")
+    pattern_detect = re.compile(r"model\.\d+\.(?:cv\d|one2one_cv\d)\.\d\.2")
 
     # Thu thập SPPF n_param động (tránh hardcode số 4)
     # SPPFPruned.cv2 input = cv1out * (n+1), cần biết n để tạo đúng mask
@@ -553,9 +553,9 @@ def main(opt):
 
         assert name_org == name_pruned, f"name mismatch: {name_org} != {name_pruned}"
 
-        # Detect DFL layer - kết thúc
+        # Detect DFL layer - skip (không prune)
         if 'dfl' in name_org:
-            break
+            continue
 
         # ─────────────────────────────────────
         # Xử lý Detect head - Conv2d không có BN
@@ -577,6 +577,16 @@ def main(opt):
 
             # Skip nếu không có BN (ví dụ: Detect head Conv2d)
             if current_bn_layer_name not in maskbndict:
+                continue
+
+            # PSABlock internal layers: BN trong ignore_bn_list, không có current_to_prev
+            # → copy weights trực tiếp (PSABlock không bị prune)
+            # Đặc biệt quan trọng cho depthwise conv (pe.conv) có weight shape [C,1,k,k]
+            if current_bn_layer_name in ignore_bn_list and current_bn_layer_name not in current_to_prev:
+                module_pruned.weight.data = module_org.weight.data.clone()
+                if module_org.bias is not None:
+                    module_pruned.bias.data = module_org.bias.data.clone()
+                changed.append(current_bn_layer_name)
                 continue
 
             out_channels_mask = maskbndict[current_bn_layer_name].to(torch.bool)
@@ -628,8 +638,12 @@ def main(opt):
                 raise RuntimeError(f"{name_org} out_channels mismatch: {expected_out} vs {module_pruned.out_channels}")
 
             # Copy weights
-            state_dict_org = module_org.weight.data[out_channels_mask, :, :, :]
-            state_dict_org = state_dict_org[:, in_channels_mask, :, :]
+            if module_org.groups > 1 and module_org.groups == module_org.in_channels:
+                # Depthwise conv: weight shape [C, 1, k, k], chỉ prune dim 0
+                state_dict_org = module_org.weight.data[out_channels_mask, :, :, :]
+            else:
+                state_dict_org = module_org.weight.data[out_channels_mask, :, :, :]
+                state_dict_org = state_dict_org[:, in_channels_mask, :, :]
             module_pruned.weight.data = state_dict_org
 
             # Copy bias

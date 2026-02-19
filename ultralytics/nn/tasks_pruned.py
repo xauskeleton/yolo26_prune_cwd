@@ -544,7 +544,7 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
                 current_to_prev[bn_cv1_name] = cv1_bn_name
                 # Bottleneck.cv2 nhận output của cv1
                 current_to_prev[bn_cv2_name] = bn_cv1_name
-                prev_bn_for_cv2.append(bn_cv1_name)
+                prev_bn_for_cv2.append(bn_cv2_name)
 
             # cv2 phụ thuộc vào cv1 + tất cả Bottleneck outputs (qua PSABlock = right_half)
             current_to_prev[cv2_bn_name] = prev_bn_for_cv2
@@ -758,6 +758,29 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
                 current_to_prev[cv3x1_dw_bn_names[scale_idx]] = cv3x0_pw_bn_names[scale_idx]
                 current_to_prev[cv3x1_pw_bn_names[scale_idx]] = cv3x1_dw_bn_names[scale_idx]
                 current_to_prev[cv3x2_conv_names[scale_idx]] = cv3x1_pw_bn_names[scale_idx]
+
+            # one2one branches (if end2end)
+            if end2end:
+                for scale_idx in range(nl):
+                    # one2one_cv2 branch
+                    o2o_cv2x0_name = base_name + f'.one2one_cv2.{scale_idx}.0.bn'
+                    o2o_cv2x1_name = base_name + f'.one2one_cv2.{scale_idx}.1.bn'
+                    o2o_cv2x2_name = base_name + f'.one2one_cv2.{scale_idx}.2'
+                    current_to_prev[o2o_cv2x0_name] = idx_to_bn_layer_name[f[scale_idx]]
+                    current_to_prev[o2o_cv2x1_name] = o2o_cv2x0_name
+                    current_to_prev[o2o_cv2x2_name] = o2o_cv2x1_name
+
+                    # one2one_cv3 branch
+                    o2o_cv3x0_dw_name = base_name + f'.one2one_cv3.{scale_idx}.0.0.bn'
+                    o2o_cv3x0_pw_name = base_name + f'.one2one_cv3.{scale_idx}.0.1.bn'
+                    o2o_cv3x1_dw_name = base_name + f'.one2one_cv3.{scale_idx}.1.0.bn'
+                    o2o_cv3x1_pw_name = base_name + f'.one2one_cv3.{scale_idx}.1.1.bn'
+                    o2o_cv3x2_name = base_name + f'.one2one_cv3.{scale_idx}.2'
+                    current_to_prev[o2o_cv3x0_dw_name] = idx_to_bn_layer_name[f[scale_idx]]
+                    current_to_prev[o2o_cv3x0_pw_name] = o2o_cv3x0_dw_name
+                    current_to_prev[o2o_cv3x1_dw_name] = o2o_cv3x0_pw_name
+                    current_to_prev[o2o_cv3x1_pw_name] = o2o_cv3x1_dw_name
+                    current_to_prev[o2o_cv3x2_name] = o2o_cv3x1_pw_name
 
             c2 = nc
             m = DetectPruned
