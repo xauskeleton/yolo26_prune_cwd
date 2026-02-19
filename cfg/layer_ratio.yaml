@@ -1,0 +1,30 @@
+# Layer-wise Custom Prune Ratio Config
+# =====================================
+# Matching priority (specific → general):
+#   1. Exact BN name:   'model.0.bn'       → chỉ layer đó
+#   2. Layer prefix:    'model.0'          → tất cả BN trong layer 0
+#   3. Group name:      'backbone'         → model.0-9
+#                       'head'             → model.10-21
+#                       'detect'           → model.22+
+#   4. Global default:  --prune-ratio flag
+
+# ── Ví dụ 1: Giữ nhiều ở layer đầu, tỉa mạnh ở head ──────────────────────
+# Layer đầu (feature extraction quan trọng)
+model.0: 0.1   # stem - giữ 90%
+model.1: 0.1
+model.2: 0.15
+
+# Backbone chính
+backbone: 0.3  # giữ 70%
+
+# Head - có thể tỉa mạnh hơn
+head: 0.5      # giữ 50%
+detect: 0.4    # Detect head - giữ 60%
+
+# ── Ví dụ 2: Ghi đè layer cụ thể nếu cần ──────────────────────────────────
+# (uncomment nếu muốn custom từng layer)
+# model.9.cv1.bn: 0.2    # SPPF cv1 - giữ nhiều
+# model.9.cv2.bn: 0.2    # SPPF cv2 - giữ nhiều
+# model.15: 0.6          # P3 head - tỉa mạnh (nhỏ nhất)
+# model.18: 0.5          # P4 head
+# model.21: 0.4          # P5 head - quan trọng hơn
