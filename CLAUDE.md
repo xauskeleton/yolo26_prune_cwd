@@ -4,7 +4,7 @@ prune.py file chính để gọi
 ultralytics/nn/modules/block_pruned.py : file này được custom chỉnh sủa theo file block.py nhằm thêm các khối prune custom
 ultralytics/nn/modules/head_pruned.py : file này được chỉnh theo head.py để viết detection head
 ultralytics/nn/tasks_pruned.py : thực hiện chính các tính toán
-cfg/yolo26m.yaml: file yaml cua yolo26
+ultralytics\cfg\models\26\yolo26.yaml : file yaml cua yolo26
 hiện tại chỉ triển khai phần pruning, distilation sẽ được thực hiện bởi người khác
 
 python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3

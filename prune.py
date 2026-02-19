@@ -549,7 +549,7 @@ def main(opt):
     sppf_cv2_pattern = re.compile(r"model\.(\d+)\.cv2\.conv")
 
     for (name_org, module_org), (name_pruned, module_pruned) in \
-        zip(model.model.named_modules(), pruned_model.named_modules()):
+        zip(model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)):
 
         assert name_org == name_pruned, f"name mismatch: {name_org} != {name_pruned}"
 
@@ -666,7 +666,7 @@ def main(opt):
     missing = [name for name in maskbndict.keys() if name not in changed and name not in ignore_bn_list]
     assert not missing, f"Missing BN layers: {missing}"
 
-    print("  ✅ Copy weights hoàn tất!")
+    print("   Copy weights hoàn tất!")
 
     # =========================================
     # STEP 11: Save model
@@ -687,15 +687,15 @@ def main(opt):
         save_path
     )
 
-    print(f"  💾 Model saved: {save_path}")
+    print(f"   Model saved: {save_path}")
 
     # Test forward
     print("\nTesting forward pass...")
-    model_test = torch.load(save_path)["model"].cuda()
+    model_test = torch.load(save_path,weights_only=False)["model"].cuda()
     dummies = torch.randn([1, 3, 640, 640], dtype=torch.float32).cuda()
     with torch.no_grad():
         output = model_test(dummies)
-    print("  ✅ Forward pass successful!")
+    print("   Forward pass successful!")
 
     # Print summary
     print_summary(maskbndict, divisor, prune_ratio, save_path)
@@ -716,7 +716,7 @@ def print_summary(maskbndict: Dict, divisor: int, prune_ratio: float, save_path:
     compression_ratio = total_origin / total_pruned if total_pruned > 0 else 0
 
     print("\n" + "=" * 100)
-    print("📊 PRUNING SUMMARY")
+    print(" PRUNING SUMMARY")
     print("=" * 100)
     print(f"Divisor:           {divisor}")
     print(f"Prune ratio:       {prune_ratio:.3f}")
@@ -724,19 +724,19 @@ def print_summary(maskbndict: Dict, divisor: int, prune_ratio: float, save_path:
     print(f"Compression:       {compression_ratio:.2f}x")
     print(f"Model saved:       {save_path}")
     print("=" * 100)
-    print("\n✅ PRUNING HOÀN TẤT!\n")
+    print("\n PRUNING HOÀN TẤT!\n")
 
 
 def parse_opt():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='YOLOv8/YOLOv26 Pruning với Divisibility Constraints')
+    parser = argparse.ArgumentParser(description='YOLO26 Pruning với Divisibility Constraints')
 
     # Basic options
     parser.add_argument('--weights', type=str,
-                       default=ROOT / 'runs/train-sparsity/weights/last.pt',
+                       default=ROOT / 'weights/best.pt',
                        help='model.pt path')
     parser.add_argument('--cfg', type=str,
-                       default=ROOT / 'ultralytics/cfg/models/v8/yolov8.yaml',
+                       default=ROOT / 'ultralytics/cfg/models/26/yolo26.yaml',
                        help='model.yaml path')
     parser.add_argument('--model-size', type=str, default='m',
                        choices=['n', 's', 'm', 'l', 'x'],
