@@ -8,6 +8,8 @@ Usage:
 
 from __future__ import annotations
 
+from ultralytics.nn.modules.block import Bottleneck, PSABlock
+
 import gc
 import math
 import os
@@ -298,6 +300,38 @@ class BaseTrainer:
         # Compile model
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
 
+        # ============================= Chuẩn bị Sparsity Training ==========================
+        # Lấy giá trị sr từ args, mặc định là 0.0 nếu không truyền vào
+        self.sr = getattr(self.args, 'sr', 0.0)
+        self.ignore_bn_list = []
+
+        if self.sr > 0:
+            LOGGER.info(f"Sparsity Training (sr={self.sr}) is ENABLED. Disabling AMP...")
+            self.args.amp = False  # Bắt buộc tắt AMP khi ép trọng số L1
+
+            for k, m in unwrap_model(self.model).named_modules():
+                # 1. Xử lý Bottleneck
+                if isinstance(m, Bottleneck):
+                    if m.add:
+                        self.ignore_bn_list.append(k + '.cv2.bn')
+                        if len(k.split('.')) >= 2 and k.split('.')[-2] == 'm':
+                            parent_name = k.rsplit(".", 2)[0]
+                            self.ignore_bn_list.append(parent_name + ".cv1.bn")
+
+                # 2. Xử lý PSABlock
+                elif isinstance(m, PSABlock):
+                    for sub_k, sub_m in m.named_modules():
+                        if isinstance(sub_m, nn.BatchNorm2d):
+                            self.ignore_bn_list.append(f"{k}.{sub_k}")
+                    parts = k.split('.')
+                    if len(parts) >= 2:
+                        layer_idx = parts[1]
+                        self.ignore_bn_list.append(f"model.{layer_idx}.cv1.bn")
+
+            self.ignore_bn_list = list(set(self.ignore_bn_list))
+            LOGGER.info(f"[Sparsity] Đã khóa {len(self.ignore_bn_list)} BN layers để bảo vệ cấu trúc.")
+        # ============================= Chuẩn bị Sparsity Training ==========================
+
         # Freeze layers
         freeze_list = (
             self.args.freeze
@@ -442,7 +476,19 @@ class BaseTrainer:
                         )
 
                     # Backward
-                    self.scaler.scale(self.loss).backward()
+                    # ============================= disable scaler ==========================
+                    if getattr(self, 'sr', 0.0) > 0:
+                        self.loss.backward()
+                    else:
+                        self.scaler.scale(self.loss).backward()
+
+                    # ============================= sparsity training ==========================
+                    if getattr(self, 'sr', 0.0) > 0:
+                        srtmp = self.sr * (1 - 0.9 * self.epoch / self.epochs)
+                        for k, m in unwrap_model(self.model).named_modules():
+                            if isinstance(m, nn.BatchNorm2d) and (k not in self.ignore_bn_list):
+                                m.weight.grad.data.add_(srtmp * torch.sign(m.weight.data))
+                    # ============================= sparsity training ==========================
                 except torch.cuda.OutOfMemoryError:
                     if epoch > self.start_epoch or self._oom_retries >= 3 or RANK != -1:
                         raise  # only auto-reduce during first epoch on single GPU, max 3 retries
@@ -720,11 +766,18 @@ class BaseTrainer:
 
     def optimizer_step(self):
         """Perform a single step of the training optimizer with gradient clipping and EMA update."""
-        self.scaler.unscale_(self.optimizer)  # unscale gradients
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        self.optimizer.zero_grad()
+        # ============================= disable scaler/grad clip =============================
+        if getattr(self, 'sr', 0.0) > 0:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+        # ============================= disable scaler/grad clip =============================
+        else:
+            self.scaler.unscale_(self.optimizer)  # unscale gradients
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+
         if self.ema:
             self.ema.update(self.model)
 

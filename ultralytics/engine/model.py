@@ -769,7 +769,20 @@ class Model(torch.nn.Module):
         if args.get("resume"):
             args["resume"] = self.ckpt_path
 
+        # ==================== Cập nhật Sparsity Training ====================
+        sr = args.get("sr", None)
+        if sr is not None:
+            args.pop("sr")  # Xóa sr khỏi args để Ultralytics không báo lỗi tham số lạ
+        # ==================== Cập nhật Sparsity Training ====================
+
+
+
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
+
+        # ==================== Cập nhật Sparsity Training ====================
+        self.trainer.sr = sr  # Gán sr vào trainer
+        # ==================== Cập nhật Sparsity Training ====================
+        
         if not args.get("resume"):  # manually set model only if not resuming
             self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
             self.model = self.trainer.model
