@@ -301,8 +301,9 @@ class BaseTrainer:
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
 
         # ============================= Chuẩn bị Sparsity Training ==========================
-        # Lấy giá trị sr từ args, mặc định là 0.0 nếu không truyền vào
-        self.sr = getattr(self.args, 'sr', 0.0)
+        # Giữ giá trị sr đã được gán từ model.py, fallback 0.0 nếu chưa set
+        if not hasattr(self, 'sr') or self.sr is None:
+            self.sr = 0.0
         self.ignore_bn_list = []
 
         if self.sr > 0:
@@ -329,7 +330,7 @@ class BaseTrainer:
                         self.ignore_bn_list.append(f"model.{layer_idx}.cv1.bn")
 
             self.ignore_bn_list = list(set(self.ignore_bn_list))
-            LOGGER.info(f"[Sparsity] Đã khóa {len(self.ignore_bn_list)} BN layers để bảo vệ cấu trúc.")
+            LOGGER.info(f"[Sparsity] Locked {len(self.ignore_bn_list)} BN layers.")
         # ============================= Chuẩn bị Sparsity Training ==========================
 
         # Freeze layers
