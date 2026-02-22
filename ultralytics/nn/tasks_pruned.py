@@ -736,6 +736,46 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
                         one2one_cv3x1_dw_outs.append(cv3x1_dw_outs[scale_idx])
                         one2one_cv3x1_pw_outs.append(cv3x1_pw_outs[scale_idx])
 
+            # ─────────────────────────────────────────────────────────────
+            # FIX: DWConv phải là true depthwise (c1 == c2 == groups).
+            # DWConv(c1, c2) dùng groups=gcd(c1,c2). Nếu c1 != c2 sau pruning
+            # (đặc biệt với sparsity model), groups != c1 → sai cấu trúc.
+            # Override: DW output mask = input layer mask → c1 == c2.
+            # ─────────────────────────────────────────────────────────────
+            for scale_idx in range(nl):
+                # cv3x0_dw: input = backbone/head feature tại scale này
+                feat_idx = f[scale_idx] if f[scale_idx] >= 0 else i + f[scale_idx]
+                feat_bn = idx_to_bn_layer_name.get(feat_idx)
+                if feat_bn is not None and not isinstance(feat_bn, list):
+                    feat_mask = maskbndict[feat_bn]
+                    maskbndict[cv3x0_dw_bn_names[scale_idx]] = feat_mask
+                    cv3x0_dw_outs[scale_idx] = int(feat_mask.sum().item())
+
+                # cv3x1_dw: input = cv3x0_pw output tại scale này
+                pw0_mask = maskbndict[cv3x0_pw_bn_names[scale_idx]]
+                maskbndict[cv3x1_dw_bn_names[scale_idx]] = pw0_mask
+                cv3x1_dw_outs[scale_idx] = int(pw0_mask.sum().item())
+
+            # one2one branches (nếu có)
+            if end2end and one2one_cv3x0_dw_outs is not None:
+                for scale_idx in range(nl):
+                    feat_idx = f[scale_idx] if f[scale_idx] >= 0 else i + f[scale_idx]
+                    feat_bn = idx_to_bn_layer_name.get(feat_idx)
+                    o2o_dw0_bn = base_name + f'.one2one_cv3.{scale_idx}.0.0.bn'
+                    o2o_pw0_bn = base_name + f'.one2one_cv3.{scale_idx}.0.1.bn'
+                    o2o_dw1_bn = base_name + f'.one2one_cv3.{scale_idx}.1.0.bn'
+
+                    if feat_bn is not None and not isinstance(feat_bn, list):
+                        if o2o_dw0_bn in maskbndict:
+                            feat_mask = maskbndict[feat_bn]
+                            maskbndict[o2o_dw0_bn] = feat_mask
+                            one2one_cv3x0_dw_outs[scale_idx] = int(feat_mask.sum().item())
+
+                    if o2o_pw0_bn in maskbndict and o2o_dw1_bn in maskbndict:
+                        o2o_pw0_mask = maskbndict[o2o_pw0_bn]
+                        maskbndict[o2o_dw1_bn] = o2o_pw0_mask
+                        one2one_cv3x1_dw_outs[scale_idx] = int(o2o_pw0_mask.sum().item())
+
             args = [
                 cv2x0_outs, cv2x1_outs,
                 cv3x0_dw_outs, cv3x0_pw_outs, cv3x1_dw_outs, cv3x1_pw_outs,
