@@ -362,34 +362,22 @@ def main(opt):
     # =========================================
     # STEP 3: Validate prune_ratio hợp lệ
     # =========================================
-    # Tính highest_thre để warn nếu global ratio quá cao
+    # Per-layer structured pruning: mỗi layer prune độc lập theo local threshold
+    # → không cần global limit (chỉ cần 0 < ratio < 1.0)
+    # Cơ chế divisor đảm bảo mỗi layer giữ ít nhất divisor channels
     print("\nStep 3: Validate prune ratio...")
+    print(f"  Prune ratio: {colorstr(f'{prune_ratio:.3f}')}")
+    print(f"  Mode: per-layer structured (mỗi layer prune {prune_ratio*100:.0f}% channels riêng)")
 
-    all_max_gammas = []
-    all_gammas = []
-    for name, module in bn_dict.items():
-        g = module.weight.data.abs().clone().cpu()
-        all_max_gammas.append(g.max().item())
-        all_gammas.extend(g.tolist())
+    if prune_ratio >= 0.9:
+        print(f"  ⚠️ Prune ratio rất cao ({prune_ratio:.2f}), model có thể mất accuracy nghiêm trọng!")
+    elif prune_ratio >= 0.7:
+        print(f"  ℹ️  Prune ratio cao ({prune_ratio:.2f}), nên fine-tune kỹ sau pruning")
 
-    highest_thre = min(all_max_gammas)
-    sorted_all = torch.sort(torch.tensor(all_gammas))[0]
-    percent_limit = (sorted_all == highest_thre).nonzero()[0, 0].item() / len(sorted_all)
-
-    print(f"  Global prune ratio tối đa an toàn: {colorstr(f'{percent_limit:.3f}')}")
-    print(f"  Global prune ratio của bạn:         {colorstr(f'{prune_ratio:.3f}')}")
-
-    if prune_ratio > percent_limit:
-        prune_ratio = percent_limit
-        print(f"  ⚠️ Global ratio giảm xuống {colorstr(f'{prune_ratio:.3f}')} (tránh prune hết 1 layer)")
-
-    # Kiểm tra layer-wise custom ratio
     if layer_ratio_cfg:
+        print(f"  Layer-wise custom ratios:")
         for rule_key, rule_ratio in layer_ratio_cfg.items():
-            if float(rule_ratio) > percent_limit:
-                print(f"  ⚠️ Layer rule '{rule_key}': ratio={rule_ratio:.3f} > limit={percent_limit:.3f}, có thể nguy hiểm!")
-            else:
-                print(f"  ✅ Layer rule '{rule_key}': ratio={rule_ratio:.3f} OK")
+            print(f"    {rule_key}: {float(rule_ratio):.3f}")
 
     # =========================================
     # STEP 6: Tạo pruned YAML
@@ -794,5 +782,5 @@ python prune.py \
     --prune-ratio 0.3 \
     --layer-ratio layer_ratio.\
     
-python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5 --divisor 8
     """
