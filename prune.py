@@ -50,155 +50,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))
 
-
-# ============================================================================
-# DIVISIBILITY STRATEGY - Các chiến lược làm tròn channels
-# ============================================================================
-
-def make_divisible_channels(channels: int, max_channels: int, divisor: int) -> int:
-    """
-    Làm tròn channels đến bội số gần nhất của divisor.
-    Dùng make_divisible từ Ultralytics.
-
-    Args:
-        channels:     Số channels cần làm tròn
-        max_channels: Giới hạn trên (không vượt quá origin)
-        divisor:      Số chia (8 hoặc 16)
-
-    Returns:
-        int: Số channels đã làm tròn, đảm bảo <= max_channels
-    """
-    return min(make_divisible(channels, divisor), max_channels)
-
-
-def get_layer_ratio(layer_name: str, layer_ratio_cfg: dict, default_ratio: float) -> float:
-    """
-    Lấy prune ratio cho một layer cụ thể.
-
-    Matching theo thứ tự ưu tiên (specific → general):
-    1. Exact match:   'model.0.bn' → 0.1
-    2. Layer index:   'model.0'    → áp dụng cho tất cả BN trong layer 0
-    3. Group name:    'backbone'   → model.0 đến model.9
-                      'head'       → model.10 trở đi
-                      'detect'     → layer Detect
-    4. Default:       global prune_ratio
-
-    Args:
-        layer_name:      Tên BN layer, ví dụ 'model.2.cv1.bn'
-        layer_ratio_cfg: Dict từ YAML, ví dụ {'model.0': 0.1, 'backbone': 0.2}
-        default_ratio:   Global prune ratio nếu không match
-
-    Returns:
-        float: prune ratio cho layer này
-
-    Example YAML (layer_ratio.yaml):
-        # Giữ nhiều kênh ở layer đầu
-        model.0: 0.1
-        model.1: 0.1
-        # Tỉa mạnh ở head
-        model.15: 0.6
-        model.18: 0.6
-        model.21: 0.6
-        # Group rules
-        backbone: 0.3
-        head: 0.5
-        detect: 0.4
-    """
-    if not layer_ratio_cfg:
-        return default_ratio
-
-    # 1. Exact match
-    if layer_name in layer_ratio_cfg:
-        return float(layer_ratio_cfg[layer_name])
-
-    # 2. Layer index match (model.X)
-    match = re.match(r'(model\.\d+)', layer_name)
-    if match:
-        layer_prefix = match.group(1)
-        if layer_prefix in layer_ratio_cfg:
-            return float(layer_ratio_cfg[layer_prefix])
-
-        # 3. Group match
-        layer_idx = int(re.search(r'model\.(\d+)', layer_name).group(1))
-
-        # detect: Detect head layer (thường là 22)
-        if 'detect' in layer_ratio_cfg and layer_idx >= 22:
-            return float(layer_ratio_cfg['detect'])
-        # backbone: model.0 - model.9
-        if 'backbone' in layer_ratio_cfg and layer_idx <= 9:
-            return float(layer_ratio_cfg['backbone'])
-        # head: model.10 - model.21
-        if 'head' in layer_ratio_cfg and 10 <= layer_idx <= 21:
-            return float(layer_ratio_cfg['head'])
-
-    return default_ratio
-
-
-# ============================================================================
-# DYNAMIC PRUNED YAML GENERATION
-# ============================================================================
-
-def build_pruned_yaml(cfg, model_size, nc):
-    """
-    Build pruned YAML dynamically from original model config.
-
-    Hỗ trợ tất cả model sizes (n, s, m, l, x) bằng cách:
-    - Đọc cấu trúc từ original YAML
-    - Apply depth_multiple cho repeat counts
-    - Map module types sang Pruned versions
-    - Giữ nguyên structural parameters (k, stride, shortcut, etc.)
-
-    Args:
-        cfg (str): Path to original YAML config
-        model_size (str): Model size ('n', 's', 'm', 'l', 'x')
-        nc (int): Number of classes (từ loaded model)
-
-    Returns:
-        dict: Pruned model config ready for DetectionModelPruned
-    """
-    with open(cfg, encoding='ascii', errors='ignore') as f:
-        model_yamls = yaml.safe_load(f)
-
-    # Get scale parameters: [depth_multiple, width_multiple, max_channels]
-    depth, width, max_ch = model_yamls['scales'][model_size]
-
-    pruned_yaml = {
-        'nc': nc,
-        'scales': model_yamls['scales'],
-        'scale': model_size,
-        'end2end': model_yamls.get('end2end', False),
-        'reg_max': model_yamls.get('reg_max', 16),
-    }
-
-    def map_layer(f, n, m, args):
-        """Map a single YAML layer to its pruned equivalent."""
-        # Apply depth to repeat count (giống ultralytics parse_model)
-        actual_n = max(round(n * depth), 1) if n > 1 else n
-
-        if m == 'C3k2':
-            # C3k2 args: [c2, c3k] hoặc [c2, c3k, e] hoặc [c2, c3k, e, attn]
-            # attn=True (arg thứ 4) → dùng C3k2PrunedAttn
-            has_attn = len(args) >= 4 and args[3] is True
-            if has_attn:
-                return [f, actual_n, 'C3k2PrunedAttn', [args[0], True]]
-            else:
-                return [f, actual_n, 'C3k2Pruned', [args[0], True]]
-        elif m == 'SPPF':
-            # SPPF args: [c2, k, n_pool, shortcut] → giữ nguyên
-            return [f, actual_n, 'SPPFPruned', args]
-        elif m == 'C2PSA':
-            # C2PSA args: [c2] hoặc [c2, e] → giữ nguyên
-            return [f, actual_n, 'C2PSAPruned', args]
-        elif m == 'Detect':
-            return [f, actual_n, 'DetectPruned', [nc]]
-        else:
-            # Conv, nn.Upsample, Concat → giữ nguyên
-            return [f, actual_n, m, args]
-
-    pruned_yaml['backbone'] = [map_layer(*layer) for layer in model_yamls['backbone']]
-    pruned_yaml['head'] = [map_layer(*layer) for layer in model_yamls['head']]
-
-    return pruned_yaml
+from dms_utils import make_divisible_channels, get_layer_ratio, build_pruned_yaml, build_ignore_bn_list
 
 
 # ============================================================================
@@ -260,92 +112,24 @@ def main(opt):
     print("Step 1: Thu thập BatchNorm layers...")
 
     bn_dict = {}
-    ignore_bn_list = []
     chunk_bn_list = []
 
-    # Debug: print model structure để hiểu architecture
-    DEBUG = True  # Set False sau khi fix
-    if DEBUG:
-        print("\n[DEBUG] Checking Bottleneck modules:")
-        bottleneck_count = 0
-        for name, module in model.model.named_modules():
-            if isinstance(module, Bottleneck):
-                bottleneck_count += 1
-                print(f"  Found: {name}, add={module.add}")
-        print(f"  Total Bottlenecks: {bottleneck_count}")
-
+    # Collect all BN layers and chunk constraints (Bottleneck without residual)
     for name, module in model.model.named_modules():
-        # Bottleneck với residual connection
-        if isinstance(module, Bottleneck):
-            if module.add:
-                # Có residual → không prune cv2
-                # C3k standard: model.X.m.j.m.k → parts[-2]='m' → ignore C3k.cv1 + Bottleneck.cv2
-                # Attn-type:    model.X.m.j.k   → parts[-2]=digit → chỉ ignore Bottleneck.cv2
-                cv2_bn = f"{name}.cv2.bn"
-                ignore_bn_list.append(cv2_bn)
-                if name.split('.')[-2] == 'm':
-                    cv1_bn = f"{name[:-4]}.cv1.bn"
-                    ignore_bn_list.append(cv1_bn)
-                    if DEBUG:
-                        print(f"  Adding to ignore: {cv1_bn}, {cv2_bn}")
-                else:
-                    if DEBUG:
-                        print(f"  Adding to ignore: {cv2_bn}")
-            else:
-                # Không có residual nhưng có chunk → phải chẵn
-                chunk_bn = f"{name[:-4]}.cv1.bn"
-                chunk_bn_list.append(chunk_bn)
-                if DEBUG:
-                    print(f"  Adding to chunk: {chunk_bn}")
-
-        # Thu thập tất cả BN layers
         if isinstance(module, nn.BatchNorm2d):
             bn_dict[name] = module
+        if isinstance(module, Bottleneck) and not module.add:
+            chunk_bn = f"{name[:-4]}.cv1.bn"
+            chunk_bn_list.append(chunk_bn)
 
-    # ─────────────────────────────────────
-    # Step 1b: PSABlock BNs + cv1.bn của parent layer
-    # PSABlock KHÔNG được prune → tất cả BN bên trong phải ignore
-    # cv1.bn của layer chứa PSABlock cũng phải ignore (để right_half cố định)
-    # ─────────────────────────────────────
-    for name, module in model.model.named_modules():
-        if isinstance(module, PSABlock):
-            # Thêm tất cả BNs bên trong PSABlock vào ignore
-            for sub_name, sub_module in module.named_modules():
-                if isinstance(sub_module, nn.BatchNorm2d):
-                    full_name = f"{name}.{sub_name}"
-                    if full_name not in ignore_bn_list:
-                        ignore_bn_list.append(full_name)
-                        if DEBUG:
-                            print(f"  [PSA] ignore: {full_name}")
+    # Build ignore list using shared utility (Bottleneck residual + PSABlock)
+    ignore_bn_list = build_ignore_bn_list(model.model)
 
-            # Thêm cv1.bn của layer cha (model.X) vào ignore
-            # → đảm bảo right_half không đổi, PSABlock nhận đúng số channels
-            parts = name.split('.')
-            layer_idx = parts[1]
-            cv1_ignore = f"model.{layer_idx}.cv1.bn"
-            if cv1_ignore not in ignore_bn_list:
-                ignore_bn_list.append(cv1_ignore)
-                if DEBUG:
-                    print(f"  [PSA parent cv1] ignore: {cv1_ignore}")
-
-    if DEBUG:
-        print(f"\n[DEBUG] Total BN layers in model: {len(bn_dict)}")
-        print(f"[DEBUG] Expected ignore BNs: {len(ignore_bn_list)}")
-        print(f"[DEBUG] Validating ignore_bn_list...")
-
-    # Validate ignore list - SOFT CHECK thay vì hard assert
-    missing_bns = []
-    for ignore_bn_name in ignore_bn_list:
-        if ignore_bn_name not in bn_dict.keys():
-            missing_bns.append(ignore_bn_name)
-
+    # Validate ignore list - remove non-existent BNs
+    missing_bns = [bn for bn in ignore_bn_list if bn not in bn_dict]
     if missing_bns:
-        print(f"\n⚠️  WARNING: {len(missing_bns)} BN không tồn tại trong model:")
-        for bn in missing_bns[:10]:  # Hiện tối đa 10
-            print(f"    - {bn}")
-        print(f"\n  → Loại bỏ các BN không tồn tại khỏi ignore_bn_list")
-        ignore_bn_list = [bn for bn in ignore_bn_list if bn in bn_dict.keys()]
-        print(f"  → Ignore list sau khi filter: {len(ignore_bn_list)} BNs")
+        print(f"  WARNING: {len(missing_bns)} BN in ignore list not found in model, removing")
+        ignore_bn_list = [bn for bn in ignore_bn_list if bn in bn_dict]
 
     print(f"  Tổng BN layers: {len(bn_dict)}")
     print(f"  Ignore (residual): {len(ignore_bn_list)}")
