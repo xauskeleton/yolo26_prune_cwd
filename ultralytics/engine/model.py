@@ -775,13 +775,29 @@ class Model(torch.nn.Module):
             args.pop("sr")  # Xóa sr khỏi args để Ultralytics không báo lỗi tham số lạ
         # ==================== Cập nhật Sparsity Training ====================
 
-
+        # ==================== DMS (Differentiable Model Scaling) ====================
+        dms = args.pop("dms", False)
+        dms_target = args.pop("dms_target", 0.3)
+        dms_lambda = args.pop("dms_lambda", 1.0)
+        dms_lr = args.pop("dms_lr", 5e-3)
+        dms_freeze = args.pop("dms_freeze", False)
+        dms_l1 = args.pop("dms_l1", 0.0)
+        # ==================== DMS (Differentiable Model Scaling) ====================
 
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
 
         # ==================== Cập nhật Sparsity Training ====================
         self.trainer.sr = sr  # Gán sr vào trainer
         # ==================== Cập nhật Sparsity Training ====================
+
+        # ==================== DMS params → trainer ====================
+        self.trainer.dms = dms
+        self.trainer.dms_target = dms_target
+        self.trainer.dms_lambda = dms_lambda
+        self.trainer.dms_lr = dms_lr
+        self.trainer.dms_freeze = dms_freeze
+        self.trainer.dms_l1 = dms_l1
+        # ==================== DMS params → trainer ====================
         
         if not args.get("resume"):  # manually set model only if not resuming
             self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
