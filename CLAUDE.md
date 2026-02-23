@@ -27,3 +27,23 @@ ultralytics-main/
 │       └── head_pruned.py             # DetectPruned head
 Workflow
 
+phan tren thua da duoc cap nhat bang cach sua 2 file ultralytics/engine/model.py ultralytics/engine/trainer.py
+
+ở bước này tôi sẽ có nhu cầu khác. Kết hợp phương pháp DMS  : DMS.pdf
+
+những bước chính : 
+Bước 1: Importance = |γ|
+        Lấy thẳng từ BN gamma, không cần tính gì thêm
+
+Bước 2: Chuẩn hóa
+        c' = rank(|γ|) / N
+        → phân bố đều từ 0 đến 1
+ci′​=N1​j=1∑N​1[ci​>cj​]
+
+Bước 3: Soft mask
+        mask = Sigmoid(N × (c' - a))
+        a ∈ [0,1] là tham số học được duy nhất
+        a = tỉ lệ kênh bị cắt
+
+Bước 4: Áp vào forward
+        output = BN(x) × mask
