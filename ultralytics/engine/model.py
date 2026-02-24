@@ -781,7 +781,7 @@ class Model(torch.nn.Module):
         dms_lambda = args.pop("dms_lambda", 1.0)
         dms_lr = args.pop("dms_lr", 5e-3)
         dms_freeze = args.pop("dms_freeze", False)
-        dms_l1 = args.pop("dms_l1", 0.0)
+        dms_importance = args.pop("dms_importance", "gamma")  # 'gamma' or 'taylor'
         # ==================== DMS (Differentiable Model Scaling) ====================
 
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
@@ -796,7 +796,7 @@ class Model(torch.nn.Module):
         self.trainer.dms_lambda = dms_lambda
         self.trainer.dms_lr = dms_lr
         self.trainer.dms_freeze = dms_freeze
-        self.trainer.dms_l1 = dms_l1
+        self.trainer.dms_importance = dms_importance
         # ==================== DMS params → trainer ====================
         
         if not args.get("resume"):  # manually set model only if not resuming

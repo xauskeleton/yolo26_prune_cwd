@@ -1,3 +1,4 @@
+
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
 Train a model on a dataset.
@@ -333,6 +334,79 @@ class BaseTrainer:
             LOGGER.info(f"[Sparsity] Locked {len(self.ignore_bn_list)} BN layers.")
         # ============================= Chuẩn bị Sparsity Training ==========================
 
+        # ============================= DMS (Differentiable Model Scaling) ==========================
+        self.dms_enabled = getattr(self, 'dms', False)
+        self.a_params = {}
+        self.dms_hooks = []
+        self.dms_importance = getattr(self, 'dms_importance', 'gamma')
+        self.taylor_buffers = {}
+
+        if self.dms_enabled:
+            from dms_utils import (
+                build_ignore_bn_list, profile_per_layer_flops,
+                build_conv_bn_mapping, make_soft_mask_hook,
+            )
+
+            LOGGER.info(
+                f"DMS Search ENABLED: target={self.dms_target}, "
+                f"lambda={self.dms_lambda}, freeze={self.dms_freeze}, "
+                f"importance={self.dms_importance}"
+            )
+
+            # Tắt AMP (giống sparsity training)
+            self.args.amp = False
+
+            # Build ignore list nếu chưa có (sparsity đã build nếu sr > 0)
+            if not self.ignore_bn_list:
+                self.ignore_bn_list = build_ignore_bn_list(unwrap_model(self.model))
+                LOGGER.info(f"[DMS] Built ignore_bn_list: {len(self.ignore_bn_list)} BN layers locked.")
+
+            # Collect prunable BNs
+            prunable_bns = {}
+            for name, m in unwrap_model(self.model).named_modules():
+                if isinstance(m, nn.BatchNorm2d) and name not in self.ignore_bn_list:
+                    prunable_bns[name] = m
+
+            # Create learnable a params (init = target ratio)
+            for name, m in prunable_bns.items():
+                a = nn.Parameter(torch.tensor(float(self.dms_target), device=self.device))
+                self.a_params[name] = a
+                # Init taylor buffer (zeros → fallback to gamma until populated)
+                if self.dms_importance == 'taylor':
+                    self.taylor_buffers[name] = torch.zeros(m.num_features, device=self.device)
+
+            # Profile per-layer FLOPs
+            imgsz = self.args.imgsz
+            self.conv_flops, self.total_flops = profile_per_layer_flops(
+                unwrap_model(self.model), imgsz=imgsz, device=self.device
+            )
+            self.conv_bn_map, self.bn_channels = build_conv_bn_mapping(
+                unwrap_model(self.model), self.ignore_bn_list
+            )
+
+            # Register forward hooks on prunable BNs
+            for name, m in prunable_bns.items():
+                hook = m.register_forward_hook(make_soft_mask_hook(
+                    name, self.a_params,
+                    importance=self.dms_importance,
+                    taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
+                ))
+                self.dms_hooks.append(hook)
+
+            # NOTE: add_param_group deferred to after _build_train_pipeline() creates optimizer
+
+            # Freeze model weights if mode freeze
+            if self.dms_freeze:
+                LOGGER.info("[DMS] Freeze mode: model weights frozen, only training a params.")
+                for p in unwrap_model(self.model).parameters():
+                    p.requires_grad = False
+
+            LOGGER.info(
+                f"[DMS] {len(self.a_params)} learnable a params, "
+                f"{self.total_flops / 1e9:.2f} GFLOPs original"
+            )
+        # ============================= DMS (Differentiable Model Scaling) ==========================
+
         # Freeze layers
         freeze_list = (
             self.args.freeze
@@ -381,6 +455,17 @@ class BaseTrainer:
             self.args.batch = self.batch_size = self.auto_batch()
 
         self._build_train_pipeline()
+
+        # ============================= DMS: separate optimizer for a_params ==========================
+        # Use separate optimizer to avoid scheduler mismatch (scheduler tracks model optimizer only)
+        if self.dms_enabled and self.a_params:
+            dms_lr = getattr(self, 'dms_lr', 5e-3)
+            self.dms_optimizer = torch.optim.Adam(
+                list(self.a_params.values()), lr=dms_lr
+            )
+            LOGGER.info(f"[DMS] Created separate Adam optimizer for {len(self.a_params)} a_params (lr={dms_lr}).")
+        # ============================= DMS: separate optimizer for a_params ==========================
+
         self.validator = self.get_validator()
         self.ema = ModelEMA(self.model)
         if RANK in {-1, 0}:
@@ -472,6 +557,17 @@ class BaseTrainer:
                         self.loss = loss.sum()
                         if RANK != -1:
                             self.loss *= self.world_size
+
+                        # ============================= DMS loss ==========================
+                        if self.dms_enabled:
+                            from dms_utils import compute_resource_loss
+                            loss_resource = compute_resource_loss(
+                                self.a_params, self.conv_flops, self.conv_bn_map,
+                                self.bn_channels, self.total_flops, self.dms_target,
+                            )
+                            self.loss = self.loss + self.dms_lambda * loss_resource
+                        # ============================= DMS loss ==========================
+
                         self.tloss = (
                             self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
                         )
@@ -479,6 +575,8 @@ class BaseTrainer:
                     # Backward
                     # ============================= disable scaler ==========================
                     if getattr(self, 'sr', 0.0) > 0:
+                        self.loss.backward()
+                    elif self.dms_enabled:
                         self.loss.backward()
                     else:
                         self.scaler.scale(self.loss).backward()
@@ -553,6 +651,17 @@ class BaseTrainer:
                 unwrap_model(self.model).criterion.update()
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
+
+            # ============================= DMS epoch logging ==========================
+            if getattr(self, 'dms_enabled', False) and self.a_params and RANK in {-1, 0}:
+                avg_a = sum(a.item() for a in self.a_params.values()) / len(self.a_params)
+                min_a = min(a.item() for a in self.a_params.values())
+                max_a = max(a.item() for a in self.a_params.values())
+                LOGGER.info(
+                    f"[DMS] Epoch {epoch}: avg_a={avg_a:.4f}, "
+                    f"min={min_a:.4f}, max={max_a:.4f}"
+                )
+            # ============================= DMS epoch logging ==========================
 
             self.run_callbacks("on_train_epoch_end")
             if RANK in {-1, 0}:
@@ -674,8 +783,7 @@ class BaseTrainer:
 
         # Serialize ckpt to a byte buffer once (faster than repeated torch.save() calls)
         buffer = io.BytesIO()
-        torch.save(
-            {
+        ckpt_dict = {
                 "epoch": self.epoch,
                 "best_fitness": self.best_fitness,
                 "model": None,  # resume and final checkpoints derive from EMA
@@ -696,9 +804,26 @@ class BaseTrainer:
                 },
                 "license": "AGPL-3.0 (https://ultralytics.com/license)",
                 "docs": "https://docs.ultralytics.com",
-            },
-            buffer,
-        )
+        }
+
+        # ============================= DMS: save a params + optimizer ==========================
+        if getattr(self, 'dms_enabled', False) and self.a_params:
+            ckpt_dict["dms_a_params"] = {
+                name: a.detach().cpu() for name, a in self.a_params.items()
+            }
+            if hasattr(self, 'dms_optimizer'):
+                ckpt_dict["dms_optimizer"] = self.dms_optimizer.state_dict()
+        # ============================= DMS: save a params + optimizer ==========================
+
+        # ============================= DMS: clean hooks from EMA copy (closures can't be pickled) ==
+        if getattr(self, 'dms_enabled', False) and self.dms_hooks:
+            ema_model = ckpt_dict.get("ema")
+            if ema_model is not None:
+                for m in ema_model.modules():
+                    m._forward_hooks.clear()
+        # =======================================================================================
+
+        torch.save(ckpt_dict, buffer)
         serialized_ckpt = buffer.getvalue()  # get the serialized content to save
 
         # Save checkpoints
@@ -772,6 +897,16 @@ class BaseTrainer:
             self.optimizer.step()
             self.optimizer.zero_grad()
         # ============================= disable scaler/grad clip =============================
+        elif getattr(self, 'dms_enabled', False):
+            # DMS mode: no scaler, model optimizer + separate dms_optimizer
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            self.dms_optimizer.step()
+            self.dms_optimizer.zero_grad()
+            # Clamp a to valid range [0.01, 0.95]
+            with torch.no_grad():
+                for a in self.a_params.values():
+                    a.clamp_(0.05, 0.95)
         else:
             self.scaler.unscale_(self.optimizer)  # unscale gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
@@ -997,6 +1132,27 @@ class BaseTrainer:
             )
             self.epochs += ckpt["epoch"]  # finetune additional epochs
         self._load_checkpoint_state(ckpt)
+
+        # ============================= DMS: restore a_params + optimizer ==========================
+        if getattr(self, 'dms_enabled', False) and self.a_params:
+            saved_a = ckpt.get('dms_a_params', {})
+            if saved_a:
+                restored = 0
+                for name, a_param in self.a_params.items():
+                    if name in saved_a:
+                        with torch.no_grad():
+                            a_param.copy_(saved_a[name].to(a_param.device))
+                        restored += 1
+                LOGGER.info(f"[DMS] Restored {restored}/{len(self.a_params)} a_params from checkpoint.")
+            else:
+                LOGGER.warning("[DMS] No dms_a_params in checkpoint, using default init.")
+            # Restore dms_optimizer state (Adam momentum etc.)
+            saved_dms_opt = ckpt.get('dms_optimizer')
+            if saved_dms_opt and hasattr(self, 'dms_optimizer'):
+                self.dms_optimizer.load_state_dict(saved_dms_opt)
+                LOGGER.info("[DMS] Restored dms_optimizer state from checkpoint.")
+        # ============================= DMS: restore a_params + optimizer ==========================
+
         self.start_epoch = start_epoch
         if start_epoch > (self.epochs - self.args.close_mosaic):
             self._close_dataloader_mosaic()

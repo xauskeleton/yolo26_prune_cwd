@@ -204,39 +204,63 @@ def build_ignore_bn_list(model):
     return list(set(ignore))
 
 
-def make_soft_mask_hook(bn_name, a_params):
+def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=None):
     """
     Create forward hook that applies differentiable soft mask after BN.
 
     Algorithm per forward:
-        1. importance = |BN.gamma|
+        1. importance = |BN.gamma| or taylor buffer
         2. c' = rank(importance) / N  (detached, no grad)
         3. mask = Sigmoid(N * (c' - a))  (grad flows through a)
         4. output *= mask
+        (if taylor: register backward hook to update taylor buffer with EMA)
 
     Args:
         bn_name: Name of the BN layer
         a_params: Dict {bn_name: nn.Parameter(a)} shared across all hooks
+        importance: 'gamma' (|BN.weight|) or 'taylor' ((mask * grad)^2 with EMA)
+        taylor_buffers: Dict {bn_name: Tensor} required when importance='taylor'
 
     Returns:
         Hook function for register_forward_hook
     """
     def hook(module, input, output):
-        gamma = module.weight.data.abs()
-        N = gamma.shape[0]
+        N = module.weight.shape[0]
 
-        # Step 1-2: Importance normalization (no grad - treat c' as constant)
+        # Step 1: Get importance scores
         with torch.no_grad():
-            sorted_idx = gamma.argsort()
-            rank = torch.zeros_like(gamma)
-            rank[sorted_idx] = torch.arange(N, device=gamma.device, dtype=gamma.dtype)
-            c_prime = rank / N  # uniform [0, 1]
+            if importance == 'taylor' and taylor_buffers is not None and bn_name in taylor_buffers:
+                scores = taylor_buffers[bn_name]
+                # Fallback to gamma if taylor is all zeros (first few iters)
+                if scores.max() == scores.min():
+                    scores = module.weight.data.abs()
+            else:
+                scores = module.weight.data.abs()
+
+            # Step 2: Rank normalize → uniform [0, 1]
+            sorted_idx = scores.argsort()
+            rank = torch.zeros_like(scores)
+            rank[sorted_idx] = torch.arange(N, device=scores.device, dtype=scores.dtype)
+            c_prime = rank / N
 
         # Step 3: Soft mask (grad flows through a only)
         a = a_params[bn_name]
-        mask = torch.sigmoid(N * (c_prime - a))
+        mask = torch.sigmoid(N * (c_prime - a))  # shape [C]
 
-        # Step 4: Apply mask [1, C, 1, 1] broadcast over batch & spatial
+        # Step 4: Taylor importance update via backward hook on mask [C]
+        if importance == 'taylor' and taylor_buffers is not None and module.training:
+            mask_vals = mask.detach()  # save current mask values
+            def _taylor_backward_hook(grad):
+                # grad shape [C] = d(loss)/d(mask), channel-level
+                with torch.no_grad():
+                    taylor_new = (mask_vals * grad) ** 2
+                    if not taylor_new.isnan().any() and taylor_new.max() != taylor_new.min():
+                        taylor_buffers[bn_name] = (
+                            taylor_buffers[bn_name] * 0.99 + taylor_new * 0.01
+                        )
+            mask.register_hook(_taylor_backward_hook)
+
+        # Step 5: Apply mask
         return output * mask.view(1, -1, 1, 1)
 
     return hook
@@ -290,51 +314,290 @@ def profile_per_layer_flops(model, imgsz=640, device='cuda'):
 
 def build_conv_bn_mapping(model, ignore_bn_list):
     """
-    Build mapping from Conv2d layer name to its output BN info.
+    Build mapping from Conv2d to output BN + input BN (for exact FLOPs).
 
-    In ultralytics Conv module: conv (Conv2d) + bn (BN2d) + act
-    So 'model.0.conv' has output BN at 'model.0.bn'
+    Uses model YAML topology to track which BN feeds into each conv's input.
+    FLOPs = in_channels × out_channels × k² × H × W / groups
+    After pruning: in_ch_eff = in_ch × (1-a_in), out_ch_eff = out_ch × (1-a_out)
 
     Args:
-        model: Unwrapped model
-        ignore_bn_list: BN layers that are not pruned
+        model: Unwrapped model (with .yaml attribute)
+        ignore_bn_list: BN layers not pruned
 
     Returns:
-        dict: {conv_name: {'out_bn': str, 'is_depthwise': bool}}
+        (dict, dict):
+            conv_bn_map: {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
+            bn_channels: {bn_name: num_features}
     """
+    # Collect BN channel counts
+    bn_channels = {}
+    for name, m in model.named_modules():
+        if isinstance(m, nn.BatchNorm2d):
+            bn_channels[name] = m.num_features
+
+    # Parse YAML topology
+    yaml_cfg = getattr(model, 'yaml', {})
+    layers = yaml_cfg.get('backbone', []) + yaml_cfg.get('head', [])
+
+    # Step 1: Output BN for each top-level layer index
+    idx_to_out_bn = {}
+    for i, (f, n, m_type, args) in enumerate(layers):
+        base = f"model.{i}"
+        if m_type == 'Conv':
+            idx_to_out_bn[i] = base + '.bn'
+        elif m_type in ('C3k2', 'SPPF', 'C2PSA'):
+            idx_to_out_bn[i] = base + '.cv2.bn'
+        elif m_type == 'nn.Upsample':
+            src = f if f >= 0 else i + f
+            idx_to_out_bn[i] = idx_to_out_bn.get(src)
+        elif m_type == 'Concat':
+            src_list = [fi if fi >= 0 else i + fi for fi in (f if isinstance(f, list) else [f])]
+            concat_bns = []
+            for si in src_list:
+                bn = idx_to_out_bn.get(si)
+                if isinstance(bn, list):
+                    concat_bns.extend(bn)
+                elif bn is not None:
+                    concat_bns.append(bn)
+            idx_to_out_bn[i] = concat_bns
+
+    # Step 2: Input BN(s) for each top-level layer
+    idx_to_in_bn = {0: None}  # first layer: no input BN (3ch image)
+    for i, (f, n, m_type, args) in enumerate(layers):
+        if i == 0:
+            continue
+        if isinstance(f, list):
+            src_list = [fi if fi >= 0 else i + fi for fi in f]
+            in_bns = []
+            for si in src_list:
+                bn = idx_to_out_bn.get(si)
+                if isinstance(bn, list):
+                    in_bns.extend(bn)
+                elif bn is not None:
+                    in_bns.append(bn)
+            idx_to_in_bn[i] = in_bns
+        else:
+            src = f if f >= 0 else i + f
+            idx_to_in_bn[i] = idx_to_out_bn.get(src)
+
+    # Step 2.5: Detect layer per-scale inputs
+    # Detect head receives a list of feature maps [P3, P4, P5].
+    # Map each scale index to its backbone output BN.
+    detect_scale_inputs = {}  # {layer_idx: {scale_i: bn_name}}
+    for i, (f, n, m_type, args) in enumerate(layers):
+        if 'Detect' in str(m_type):
+            f_list = f if isinstance(f, list) else [f]
+            for scale_i, fi in enumerate(f_list):
+                src = fi if fi >= 0 else i + fi
+                bn = idx_to_out_bn.get(src)
+                detect_scale_inputs.setdefault(i, {})[scale_i] = bn
+
+    # Step 3: Per-conv mapping
     mapping = {}
     for name, m in model.named_modules():
-        if isinstance(m, nn.Conv2d) and name.endswith('.conv'):
-            out_bn = name[:-4] + 'bn'  # replace '.conv' → '.bn'
-            is_dw = (m.groups == m.in_channels and m.in_channels > 1)
-            mapping[name] = {
-                'out_bn': out_bn,
-                'is_depthwise': is_dw,
-            }
-    return mapping
+        if not (isinstance(m, nn.Conv2d) and name.endswith('.conv')):
+            continue
+
+        out_bn = name[:-4] + 'bn'
+        is_dw = (m.groups == m.in_channels and m.in_channels > 1)
+        parts = name.split('.')
+        layer_idx = int(parts[1])
+        sub = '.'.join(parts[2:])  # e.g. 'conv', 'cv1.conv', 'm.0.m.0.cv1.conv'
+
+        # Resolve in_bn
+        if is_dw:
+            in_bn = out_bn                          # depthwise: in = out (tied)
+        elif sub == 'conv':
+            in_bn = idx_to_in_bn.get(layer_idx)     # simple Conv layer
+        elif sub == 'cv1.conv':
+            in_bn = idx_to_in_bn.get(layer_idx)     # first conv of C3k2/SPPF/C2PSA
+        elif sub == 'cv2.conv':
+            m_type = layers[layer_idx][2] if layer_idx < len(layers) else ''
+            if m_type in ('SPPF', 'C2PSA'):
+                in_bn = f"model.{layer_idx}.cv1.bn"
+            elif m_type == 'C3k2':
+                # cv2 = cat(left_half + bottleneck outputs) → cv1.bn dominant
+                in_bn = f"model.{layer_idx}.cv1.bn"
+            else:
+                in_bn = None
+        elif layer_idx in detect_scale_inputs:
+            # Detect head convs (cv2/cv3/one2one_cv2/one2one_cv3)
+            in_bn = _resolve_detect_in_bn(name, layer_idx,
+                                          detect_scale_inputs[layer_idx])
+        else:
+            # Internal bottleneck convs
+            in_bn = _resolve_internal_in_bn(name, layer_idx, bn_channels)
+
+        mapping[name] = {
+            'out_bn': out_bn,
+            'in_bn': in_bn,
+            'is_depthwise': is_dw,
+        }
+
+    return mapping, bn_channels
 
 
-def compute_resource_loss(a_params, conv_flops, conv_bn_map, total_flops, target_ratio):
+def _resolve_internal_in_bn(conv_name, layer_idx, bn_channels):
+    """
+    Resolve in_bn for internal module convs inside C3k2 blocks.
+
+    Determines module type from ACTUAL model structure (not YAML) by checking
+    whether cv3.bn exists (C3k has cv3, Bottleneck does not).
+
+    Handles 3 naming patterns:
+
+    Pattern A - 4 sub_parts (m.J.cvN.conv):
+      C3k:       cv1/cv2 parallel (both take chunk), cv3 after concat
+      Bottleneck: cv1→cv2 sequential
+
+    Pattern B - 6 sub_parts (m.J.m.K.cvN.conv):
+      Bottleneck[K] inside C3k[J]
+
+    Pattern C - 5 sub_parts (m.J.K.cvN.conv):
+      Attn Sequential: nn.Sequential(Bottleneck, PSABlock)
+
+    Args:
+        conv_name: Full conv name (e.g., 'model.6.m.0.cv1.conv')
+        layer_idx: Top-level layer index
+        bn_channels: Dict {bn_name: num_features} from actual model
+    """
+    parts = conv_name.split('.')
+    sub_parts = parts[2:]  # after 'model.X'
+    n_sub = len(sub_parts)
+
+    # ---- Pattern A: m.J.cvN.conv (4 sub_parts) ----
+    if n_sub == 4 and sub_parts[0] == 'm':
+        j = int(sub_parts[1])
+        cv_name = sub_parts[2]  # 'cv1', 'cv2', or 'cv3'
+
+        # C3k cv3: cat(m_out, cv2_out) → proxy: cv1.bn
+        if cv_name == 'cv3':
+            return f"model.{layer_idx}.m.{j}.cv1.bn"
+
+        # Check actual module type: C3k has cv3.bn, Bottleneck does not
+        is_c3k = f"model.{layer_idx}.m.{j}.cv3.bn" in bn_channels
+
+        if is_c3k:
+            # C3k cv1 and cv2 are PARALLEL - both take same input
+            if j == 0:
+                return f"model.{layer_idx}.cv1.bn"  # chunk right_half
+            else:
+                return f"model.{layer_idx}.m.{j-1}.cv3.bn"  # prev C3k output
+        else:
+            # Bottleneck[J] directly inside C3k2
+            if cv_name == 'cv1':
+                if j == 0:
+                    return f"model.{layer_idx}.cv1.bn"  # chunk right_half
+                else:
+                    return f"model.{layer_idx}.m.{j-1}.cv2.bn"  # prev Bottleneck
+            elif cv_name == 'cv2':
+                return f"model.{layer_idx}.m.{j}.cv1.bn"  # this Bottleneck's cv1
+
+    # ---- Pattern B: m.J.m.K.cvN.conv (6 sub_parts) ----
+    # Bottleneck[K] inside C3k[J]
+    if n_sub == 6 and sub_parts[0] == 'm' and sub_parts[2] == 'm':
+        j = int(sub_parts[1])
+        k = int(sub_parts[3])
+        cv_name = sub_parts[4]
+
+        if cv_name == 'cv2':
+            # Bottleneck cv2 → input from this Bottleneck's cv1
+            return conv_name.replace('.cv2.conv', '.cv1.bn')
+        elif cv_name == 'cv1':
+            if k == 0:
+                # First Bottleneck → input from C3k[J].cv1 output
+                return f"model.{layer_idx}.m.{j}.cv1.bn"
+            else:
+                # Later Bottleneck → input from prev Bottleneck's cv2
+                return f"model.{layer_idx}.m.{j}.m.{k-1}.cv2.bn"
+
+    # ---- Pattern C: m.J.K.cvN.conv (5 sub_parts) ----
+    # Attn: nn.Sequential(Bottleneck[K=0], PSABlock[K=1]) inside C3k2.m[J]
+    if n_sub == 5 and sub_parts[0] == 'm':
+        j = int(sub_parts[1])   # ModuleList index
+        # k = int(sub_parts[2])  # Sequential index (0=Bottleneck)
+        cv_name = sub_parts[3]
+
+        if cv_name == 'cv2':
+            return conv_name.replace('.cv2.conv', '.cv1.bn')
+        elif cv_name == 'cv1':
+            if j == 0:
+                return f"model.{layer_idx}.cv1.bn"  # chunk right_half
+            else:
+                # Prev Sequential output (PSABlock) - not pruned → None fallback
+                return None
+
+    return None
+
+
+def _resolve_detect_in_bn(conv_name, layer_idx, scale_inputs):
+    """
+    Resolve in_bn for Detect head convs.
+
+    Detect head structure per scale I:
+        cv2[I] = Sequential(Conv[0], Conv[1], nn.Conv2d[2])
+        cv3[I] = Sequential(Sequential(DW[0], PW[1]), Sequential(DW[0], PW[1]), nn.Conv2d[2])
+        one2one_cv2/one2one_cv3 follow same structure.
+
+    Args:
+        conv_name: e.g. 'model.23.cv2.0.1.conv'
+        layer_idx: e.g. 23
+        scale_inputs: {0: 'model.16.cv2.bn', 1: 'model.19.cv2.bn', 2: 'model.22.cv2.bn'}
+    """
+    parts = conv_name.split('.')
+    sub_parts = parts[2:-1]  # after 'model.X', before 'conv'
+    # e.g. ['cv2', '0', '1'] or ['cv3', '0', '0', '1'] or ['one2one_cv2', '0', '0']
+
+    branch = sub_parts[0]
+    indices = sub_parts[1:]
+
+    if branch in ('cv2', 'one2one_cv2'):
+        # cv2.I.J → indices = ['I', 'J']
+        scale_i = int(indices[0])
+        j = int(indices[1])
+        if j == 0:
+            return scale_inputs.get(scale_i)
+        else:
+            return f"model.{layer_idx}.{branch}.{scale_i}.{j-1}.bn"
+
+    elif branch in ('cv3', 'one2one_cv3'):
+        # cv3.I.J.K → indices = ['I', 'J', 'K']
+        scale_i = int(indices[0])
+        j = int(indices[1])
+        k = int(indices[2])
+        if k == 0:
+            # DW conv — normally caught by is_dw check before reaching here.
+            # Provide correct source anyway for robustness.
+            if j == 0:
+                return scale_inputs.get(scale_i)
+            else:
+                return f"model.{layer_idx}.{branch}.{scale_i}.{j-1}.1.bn"
+        else:
+            # Pointwise after DW
+            return f"model.{layer_idx}.{branch}.{scale_i}.{j}.0.bn"
+
+    return None
+
+
+def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
+                          total_flops, target_ratio):
     """
     GFLOPs-based resource constraint (differentiable w.r.t a params).
 
     Paper Eq. 5-6:
-        loss = log(r_c / r_t) if r_c > r_t, else 0
-        r_c = effective_flops / total_flops
-        r_t = 1 - target_ratio
+        loss = log(r_e / r_t) if r_e > r_t, else 0
 
-    For each conv layer:
-        - regular:   effective = original × (1 - a_out)²
-        - depthwise: effective = original × (1 - a_out)
-
-    Note: Using (1-a_out)² as proxy for (1-a_in)×(1-a_out) because
-    neighboring layers tend to have similar pruning ratios.
+    Exact per-conv FLOPs:
+        - regular:   effective = original × (1-a_in) × (1-a_out)
+        - depthwise: effective = original × (1-a_out)
+        - concat in: weighted average retention by channel count
 
     Args:
-        a_params: Dict {bn_name: nn.Parameter}
-        conv_flops: Dict {conv_name: flops} from profiling
-        conv_bn_map: Dict {conv_name: {'out_bn', 'is_depthwise'}}
-        total_flops: Total original FLOPs
+        a_params:     Dict {bn_name: nn.Parameter}
+        conv_flops:   Dict {conv_name: flops} from profiling
+        conv_bn_map:  Dict {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
+        bn_channels:  Dict {bn_name: num_features}
+        total_flops:  Total original FLOPs
         target_ratio: Target pruning ratio (e.g., 0.3 = remove 30%)
 
     Returns:
@@ -346,33 +609,48 @@ def compute_resource_loss(a_params, conv_flops, conv_bn_map, total_flops, target
     for conv_name, flops in conv_flops.items():
         info = conv_bn_map.get(conv_name)
         if info is None:
-            # Conv2d without BN mapping (e.g., Detect head final conv)
             effective_flops = effective_flops + flops
             continue
 
         out_bn = info['out_bn']
+        in_bn = info.get('in_bn')
         is_dw = info['is_depthwise']
 
-        a_out = a_params.get(out_bn, None)
-        if a_out is None:
-            # Ignored BN → no pruning, keep all channels
-            effective_flops = effective_flops + flops
-            continue
+        # Output retention
+        a_out = a_params.get(out_bn)
+        retain_out = (1.0 - a_out) if a_out is not None else 1.0
 
-        retain = 1.0 - a_out
-
+        # Compute ratio
         if is_dw:
-            ratio = retain
+            ratio = retain_out
+        elif in_bn is None:
+            # Cannot resolve input → assume input not prunable
+            ratio = retain_out
+        elif isinstance(in_bn, list):
+            # Concat input: weighted average retention
+            total_ch = 0.0
+            weighted_retain = torch.tensor(0.0, device=device)
+            for bn_name in in_bn:
+                ch = bn_channels.get(bn_name, 0)
+                a_in = a_params.get(bn_name)
+                r = (1.0 - a_in) if a_in is not None else 1.0
+                total_ch += ch
+                weighted_retain = weighted_retain + ch * r
+            retain_in = weighted_retain / total_ch if total_ch > 0 else 1.0
+            ratio = retain_in * retain_out
         else:
-            ratio = retain * retain
+            # Single input BN
+            a_in = a_params.get(in_bn)
+            retain_in = (1.0 - a_in) if a_in is not None else 1.0
+            ratio = retain_in * retain_out
 
         effective_flops = effective_flops + flops * ratio
 
-    r_c = effective_flops / total_flops
+    r_e = effective_flops / total_flops
     r_t = 1.0 - target_ratio
 
-    if r_c > r_t:
-        return torch.log(r_c / r_t)
+    if r_e > r_t:
+        return torch.log(r_e / r_t)
     return torch.tensor(0.0, device=device, requires_grad=True)
 
 
