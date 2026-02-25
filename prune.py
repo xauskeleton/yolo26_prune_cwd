@@ -38,7 +38,7 @@ from ultralytics.nn.modules.block import Bottleneck, PSABlock
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.nn.modules import Conv, Concat
 
-from ultralytics.nn.modules.block_pruned import C3k2Pruned, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
+from ultralytics.nn.modules.block_pruned import C3k2Pruned, C3k2PrunedBn, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
 from ultralytics.nn.modules.head_pruned import DetectPruned
 from ultralytics.nn.tasks_pruned import DetectionModelPruned
 
@@ -375,7 +375,11 @@ def main(opt):
                 # BUG FIX: C3k[0] cv1 VÀ cv2 đều nhận right_half (sau chunk)
                 # C3kPruned: cv1(x), cv2(x) với x = right_half của C3k2.cv1
                 if pattern_c3k_first.fullmatch(current_bn_layer_name) is not None:
-                    in_channels_mask = in_channels_mask.chunk(2, 0)[1]
+                    # Guard: chỉ chunk nếu KHÔNG phải Bottleneck cv2 (sequential)
+                    # C3k cv1/cv2: parallel → cần chunk (không nằm trong ignore_bn_list)
+                    # Bottleneck cv2: sequential → KHÔNG chunk (nằm trong ignore_bn_list vì add=True)
+                    if current_bn_layer_name not in ignore_bn_list:
+                        in_channels_mask = in_channels_mask.chunk(2, 0)[1]
 
                 # BUG FIX: SPPF second conv - dynamic n_param thay vì hardcode 4
                 # SPPFPruned.cv2 input = cv1out * (n+1), hardcode 4 chỉ đúng khi n=3
@@ -446,7 +450,8 @@ def main(opt):
     print("\nStep 11: Save pruned model...")
 
     pruned_model.eval()
-    save_path = os.path.join(save_dir, f"pruned_div{divisor}.pt")
+    input_name = Path(weights).stem  # vd: "yolo26s" từ "yolo26s.pt"
+    save_path = os.path.join(save_dir, f"{input_name}_pruned_div{divisor}.pt")
     torch.save(
         {
             "model": pruned_model,

@@ -784,6 +784,21 @@ class Model(torch.nn.Module):
         dms_importance = args.pop("dms_importance", "gamma")  # 'gamma' or 'taylor'
         # ==================== DMS (Differentiable Model Scaling) ====================
 
+        # ==================== Finetune pruned model ====================
+        finetune = args.pop("finetune", False)
+        # ==================== Finetune pruned model ====================
+
+        # ==================== CWD (Channel-Wise Distillation) ====================
+        cwd = args.pop("cwd", False)
+        cwd_teacher = args.pop("cwd_teacher", None)
+        cwd_lambda = args.pop("cwd_lambda", 0.5)
+        cwd_temperature = args.pop("cwd_temperature", 6.0)
+        tau_max = args.pop("tau_max", 10.0)
+        tau_min = args.pop("tau_min", 1.0)
+        cwd_layers = args.pop("cwd_layers", "neck")
+        cwd_layer_weights = args.pop("cwd_layer_weights", None)
+        # ==================== CWD (Channel-Wise Distillation) ====================
+
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
 
         # ==================== Cập nhật Sparsity Training ====================
@@ -798,9 +813,30 @@ class Model(torch.nn.Module):
         self.trainer.dms_freeze = dms_freeze
         self.trainer.dms_importance = dms_importance
         # ==================== DMS params → trainer ====================
-        
+
+        # ==================== CWD params → trainer ====================
+        self.trainer.cwd = cwd
+        self.trainer.cwd_teacher = cwd_teacher
+        self.trainer.cwd_lambda = cwd_lambda
+        self.trainer.cwd_temperature = cwd_temperature
+        self.trainer.tau_max = tau_max
+        self.trainer.tau_min = tau_min
+        self.trainer.cwd_layers = cwd_layers
+        self.trainer.cwd_layer_weights = cwd_layer_weights
+        self.trainer.cwd_maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
+        # ==================== CWD params → trainer ====================
+
+        # ==================== Finetune pruned model → trainer ====================
+        self.trainer.finetune = finetune
+        self.trainer.maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
+        # ==================== Finetune pruned model → trainer ====================
+
         if not args.get("resume"):  # manually set model only if not resuming
-            self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
+            self.trainer.model = self.trainer.get_model(
+                weights=self.model if self.ckpt else None,
+                cfg=self.model.yaml,
+                maskbndict=self.trainer.maskbndict if finetune else None,
+            )
             self.model = self.trainer.model
 
         self.trainer.train()

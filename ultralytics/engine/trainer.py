@@ -479,6 +479,73 @@ class BaseTrainer:
         self.scheduler.last_epoch = self.start_epoch - 1  # do not move
         self.run_callbacks("on_pretrain_routine_end")
 
+        # ============================= CWD (Channel-Wise Distillation) ==========================
+        self.cwd_enabled = getattr(self, 'cwd', False)
+        if self.cwd_enabled:
+            import math as _math
+            from cwd_loss import CWDLoss, setup_hooks, build_cwd_channel_masks
+            from ultralytics.nn.autobackend import AutoBackend
+
+            teacher_path = getattr(self, 'cwd_teacher', None)
+            assert teacher_path, "cwd=True requires cwd_teacher='path/to/teacher.pt'"
+
+            self.args.amp = False
+
+            # Load + freeze teacher
+            self.teacher_model = AutoBackend(teacher_path, fuse=False)
+            self.teacher_model.eval().to(self.device)
+            for p in self.teacher_model.parameters():
+                p.requires_grad = False
+
+            # Distill layer indices
+            layers_cfg = getattr(self, 'cwd_layers', 'neck')
+            if layers_cfg == "neck":
+                layer_indices = [13, 16, 19, 22]
+            else:  # "all"
+                layer_indices = [2, 4, 6, 8, 13, 16, 19, 22]
+
+            self.cwd_layer_names = [f"model.{i}" for i in layer_indices]
+
+            # Setup passive hooks on student and teacher
+            self.student_hooks = setup_hooks(unwrap_model(self.model), self.cwd_layer_names)
+            self.teacher_hooks = setup_hooks(self.teacher_model.model, self.cwd_layer_names)
+
+            # Build channel masks from maskbndict (if student is pruned)
+            maskbndict = getattr(self, 'cwd_maskbndict', None)
+            if maskbndict is not None:
+                self.cwd_channel_masks = build_cwd_channel_masks(maskbndict, layer_indices)
+                LOGGER.info(f"[CWD] Channel masks: {len(self.cwd_channel_masks)} layers have mismatch")
+            else:
+                self.cwd_channel_masks = {}
+
+            # Temperature
+            temp_cfg = getattr(self, 'cwd_temperature', 6.0)
+            if isinstance(temp_cfg, str) and temp_cfg == "dynamic":
+                self.cwd_temp_mode = "dynamic"
+                self.cwd_temp_max = getattr(self, 'tau_max', 10.0)
+                self.cwd_temp_min = getattr(self, 'tau_min', 1.0)
+            else:
+                self.cwd_temp_mode = "fixed"
+                self.cwd_temp_value = float(temp_cfg)
+
+            self.cwd_criterion = CWDLoss()
+            self._cwd_lambda = getattr(self, 'cwd_lambda', 0.5)
+
+            # Per-layer weights: {idx: weight} → {layer_name: weight}
+            raw_weights = getattr(self, 'cwd_layer_weights', None)
+            self._cwd_layer_weights = {}
+            if raw_weights:
+                for idx, w in raw_weights.items():
+                    self._cwd_layer_weights[f"model.{idx}"] = w
+
+            LOGGER.info(f"[CWD] ENABLED: teacher={teacher_path}, lambda={self._cwd_lambda}")
+            LOGGER.info(f"[CWD] layers={self.cwd_layer_names}, temp={temp_cfg}")
+            if self._cwd_layer_weights:
+                LOGGER.info(f"[CWD] layer_weights={self._cwd_layer_weights}")
+            if getattr(self.args, 'resume', False):
+                LOGGER.info("[CWD] Resuming CWD training...")
+        # ============================= CWD (Channel-Wise Distillation) ==========================
+
     def _do_train(self):
         """Perform the full training loop including setup, epoch iteration, validation, and final evaluation."""
         if self.world_size > 1:
@@ -572,11 +639,35 @@ class BaseTrainer:
                             self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
                         )
 
+                    # ============================= CWD loss ==========================
+                    if getattr(self, 'cwd_enabled', False):
+                        import math as _math
+                        from cwd_loss import compute_cwd_loss
+
+                        with torch.no_grad():
+                            self.teacher_model(batch["img"])
+
+                        if self.cwd_temp_mode == "dynamic":
+                            progress = epoch / self.epochs
+                            tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
+                        else:
+                            tau = self.cwd_temp_value
+
+                        cwd_loss_val = compute_cwd_loss(
+                            self.student_hooks, self.teacher_hooks,
+                            self.cwd_criterion, self.cwd_channel_masks,
+                            self._cwd_layer_weights, temperature=tau,
+                        )
+                        self.loss = self.loss + self._cwd_lambda * cwd_loss_val
+                    # ============================= CWD loss ==========================
+
                     # Backward
                     # ============================= disable scaler ==========================
                     if getattr(self, 'sr', 0.0) > 0:
                         self.loss.backward()
                     elif self.dms_enabled:
+                        self.loss.backward()
+                    elif self.cwd_enabled:
                         self.loss.backward()
                     else:
                         self.scaler.scale(self.loss).backward()
@@ -662,6 +753,17 @@ class BaseTrainer:
                     f"min={min_a:.4f}, max={max_a:.4f}"
                 )
             # ============================= DMS epoch logging ==========================
+
+            # ============================= CWD epoch logging ==========================
+            if getattr(self, 'cwd_enabled', False) and RANK in {-1, 0}:
+                import math as _math
+                if self.cwd_temp_mode == "dynamic":
+                    progress = epoch / self.epochs
+                    tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
+                else:
+                    tau = self.cwd_temp_value
+                LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau:.2f}")
+            # ============================= CWD epoch logging ==========================
 
             self.run_callbacks("on_train_epoch_end")
             if RANK in {-1, 0}:
@@ -823,6 +925,28 @@ class BaseTrainer:
                     m._forward_hooks.clear()
         # =======================================================================================
 
+        # ============================= CWD: save state for resume ==========================
+        if getattr(self, 'cwd_enabled', False):
+            ckpt_dict["cwd_state"] = {
+                "teacher": getattr(self, 'cwd_teacher', None),
+                "lambda": self._cwd_lambda,
+                "temperature": getattr(self, 'cwd_temperature', 6.0),
+                "layers": getattr(self, 'cwd_layers', 'neck'),
+                "layer_weights": getattr(self, 'cwd_layer_weights', None),
+            }
+            maskbndict = getattr(self, 'cwd_maskbndict', None)
+            if maskbndict is not None:
+                ckpt_dict["maskbndict"] = maskbndict
+        # ============================= CWD: save state for resume ==========================
+
+        # ============================= CWD: clean hooks from EMA copy ==========================
+        if getattr(self, 'cwd_enabled', False):
+            ema_model = ckpt_dict.get("ema")
+            if ema_model is not None:
+                for m in ema_model.modules():
+                    m._forward_hooks.clear()
+        # ============================= CWD: clean hooks from EMA copy ==========================
+
         torch.save(ckpt_dict, buffer)
         serialized_ckpt = buffer.getvalue()  # get the serialized content to save
 
@@ -907,6 +1031,11 @@ class BaseTrainer:
             with torch.no_grad():
                 for a in self.a_params.values():
                     a.clamp_(0.05, 0.95)
+        # ============================= CWD: skip scaler =============================
+        elif getattr(self, 'cwd_enabled', False):
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+        # ============================= CWD: skip scaler =============================
         else:
             self.scaler.unscale_(self.optimizer)  # unscale gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)

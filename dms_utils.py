@@ -150,8 +150,15 @@ def build_pruned_yaml(cfg, model_size, nc):
             has_attn = len(args) >= 4 and args[3] is True
             if has_attn:
                 return [f, actual_n, 'C3k2PrunedAttn', [args[0], True]]
-            else:
+            # Xác định c3k theo logic Ultralytics (tasks.py line 1651-1654):
+            # Size m/l/x: force c3k=True | Size n/s: giữ YAML value
+            c3k_val = args[1] if len(args) >= 2 else False
+            if model_size in ('m', 'l', 'x'):
+                c3k_val = True
+            if c3k_val:
                 return [f, actual_n, 'C3k2Pruned', [args[0], True]]
+            else:
+                return [f, actual_n, 'C3k2PrunedBn', [args[0], False]]
         elif m == 'SPPF':
             # SPPF args: [c2, k, n_pool, shortcut] → giữ nguyên
             return [f, actual_n, 'SPPFPruned', args]

@@ -7,6 +7,7 @@ __all__ = (
     'BottleneckPruned',
     'C3kPruned',
     'C3k2Pruned',
+    'C3k2PrunedBn',
     'C3k2PrunedAttn',
     'SPPFPruned',
     'C2PSAPruned',
@@ -212,6 +213,60 @@ class C3k2Pruned(nn.Module):
         y.extend(m(y[-1]) for m in self.m)
 
         # Concat và final conv
+        return self.cv2(torch.cat(y, 1))
+
+
+class C3k2PrunedBn(nn.Module):
+    """
+    Pruned C3k2 block for c3k=False (plain Bottleneck inner modules).
+
+    Used for size n/s where Ultralytics keeps c3k=False for early layers (2, 4).
+    Structure identical to C2f: cv1 → chunk → Bottleneck chain → concat → cv2.
+
+    Bottleneck with add=True: output channels = input channels = right_half.
+
+    Args:
+        cv1in (int): Input channels
+        cv1out (int): Output channels of cv1
+        cv1_split_sections (tuple): (left_half, right_half) after split
+        bn_cv1outs (list[int]): cv1 output per Bottleneck (prunable)
+        cv2out (int): Output channels of cv2 (final output)
+        n (int): Number of Bottleneck modules
+        shortcut (bool): Shortcut for Bottleneck (residual)
+        g (int): Groups
+        k (int): Kernel size
+    """
+
+    def __init__(self, cv1in, cv1out, cv1_split_sections,
+                 bn_cv1outs, cv2out, n=1, shortcut=True, g=1, k=3):
+        super().__init__()
+
+        self.cv1_split_sections = cv1_split_sections
+        right_half = cv1_split_sections[1]
+
+        # Khai báo theo thứ tự gốc C2f: cv1 → cv2 → m
+        self.cv1 = Conv(cv1in, cv1out, 1, 1)
+
+        # cv2 input = left + right + n * right_half (each Bottleneck outputs right_half)
+        cv2_input = cv1out + n * right_half
+        self.cv2 = Conv(cv2_input, cv2out, 1, 1)
+
+        # Bottleneck chain - all receive right_half channels as input
+        self.m = nn.ModuleList()
+        for i in range(n):
+            self.m.append(
+                BottleneckPruned(
+                    cv1in=right_half,
+                    cv1out=bn_cv1outs[i],
+                    cv2out=right_half,  # add=True → output = input channels
+                    shortcut=shortcut, g=g, k=(k, k), e=1.0
+                )
+            )
+
+    def forward(self, x):
+        """Forward: cv1 → split → Bottleneck chain → concat → cv2."""
+        y = list(self.cv1(x).split(self.cv1_split_sections, dim=1))
+        y.extend(m(y[-1]) for m in self.m)
         return self.cv2(torch.cat(y, 1))
 
 

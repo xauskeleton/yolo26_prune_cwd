@@ -14,13 +14,14 @@ from ultralytics.nn.modules.block_pruned import (
     BottleneckPruned,
     C3kPruned,
     C3k2Pruned,
+    C3k2PrunedBn,
     C3k2PrunedAttn,
     SPPFPruned,
     C2PSAPruned,
 )
 
 from ultralytics.utils import LOGGER, colorstr
-from ultralytics.utils.loss import v8DetectionLoss
+from ultralytics.utils.loss import v8DetectionLoss, E2ELoss
 from ultralytics.utils.torch_utils import initialize_weights, scale_img
 
 
@@ -108,6 +109,25 @@ class DetectionModelPruned(BaseModel):
             self.info()
             LOGGER.info('')
 
+    @property
+    def end2end(self):
+        """Return whether the model uses end-to-end NMS-free detection."""
+        return getattr(self.model[-1], "end2end", False)
+
+    @end2end.setter
+    def end2end(self, value):
+        """Override the end-to-end detection mode."""
+        self.set_head_attr(end2end=value)
+
+    def set_head_attr(self, **kwargs):
+        """Set attributes of the model head (last layer)."""
+        head = self.model[-1]
+        for k, v in kwargs.items():
+            if not hasattr(head, k):
+                LOGGER.warning(f"Head has no attribute '{k}'.")
+                continue
+            setattr(head, k, v)
+
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
         img_size = x.shape[-2:]  # height, width
@@ -146,7 +166,7 @@ class DetectionModelPruned(BaseModel):
 
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
-        return v8DetectionLoss(self)
+        return E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
 
 def parse_model_pruned(maskbndict, d, ch, verbose=True):
@@ -476,6 +496,83 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
             idx_to_bn_layer_name[i] = cv2_bn_name
 
             m = C3k2Pruned
+            n = 1
+
+        elif m == 'C3k2PrunedBn':
+            # ─────────── C3K2 PRUNED BN (c3k=False) ───────────
+            # Dành cho C3k2 có c3k=False: m = Bottleneck (chỉ cv1, cv2, không cv3)
+            # Dùng cho size n/s ở layers 2, 4
+            c1 = ch[f]
+
+            # cv1
+            cv1_bn_name = base_name + '.cv1.bn'
+            cv1_mask = maskbndict[cv1_bn_name]
+            cv1out = torch.sum(cv1_mask).int().item()
+
+            cv1_split_sections = [
+                torch.sum(cv1_mask.chunk(2, 0)[0]).int().item(),
+                torch.sum(cv1_mask.chunk(2, 0)[1]).int().item()
+            ]
+
+            # Detect Bottleneck modules (chỉ có cv1, cv2 - không có cv3)
+            bn_indices = []
+            for j in range(10):
+                test_key = base_name + f'.m.{j}.cv1.bn'
+                if test_key in maskbndict:
+                    bn_indices.append(j)
+                else:
+                    break
+
+            n_bn = len(bn_indices)
+            bn_cv1outs = []
+            for j in bn_indices:
+                bn_cv1_name = base_name + f'.m.{j}.cv1.bn'
+                bn_cv1outs.append(torch.sum(maskbndict[bn_cv1_name]).int().item())
+
+            # cv2
+            cv2_bn_name = base_name + '.cv2.bn'
+            cv2_mask = maskbndict[cv2_bn_name]
+            cv2out = torch.sum(cv2_mask).int().item()
+
+            args = [c1, cv1out, cv1_split_sections, bn_cv1outs, cv2out, n_bn]
+            c2 = cv2out
+
+            # Track dependencies
+            current_to_prev[cv1_bn_name] = prev_bn_layer_name
+            if prev_module == 'Concat':
+                fx = ([f if f >= 0 else i + f] if isinstance(f, int)
+                      else [ix if ix >= 0 else i + ix for ix in f])
+                all_bns = []
+                for ix in fx:
+                    bn = idx_to_bn_layer_name[ix]
+                    if isinstance(bn, list):
+                        all_bns.extend(bn)
+                    else:
+                        all_bns.append(bn)
+                current_to_prev[cv1_bn_name] = all_bns
+
+            prev_bn_layer_name = cv1_bn_name
+
+            # Track Bottleneck modules
+            prev_bn_layer_names_for_cv2 = [cv1_bn_name]
+            for j_idx, j in enumerate(bn_indices):
+                bn_cv1_name = base_name + f'.m.{j}.cv1.bn'
+                bn_cv2_name = base_name + f'.m.{j}.cv2.bn'
+
+                # Bottleneck.cv1 nhận right_half (j==0) hoặc prev bottleneck output
+                current_to_prev[bn_cv1_name] = prev_bn_layer_name
+                # Bottleneck.cv2 nhận cv1 output
+                current_to_prev[bn_cv2_name] = bn_cv1_name
+
+                prev_bn_layer_name = bn_cv2_name
+                prev_bn_layer_names_for_cv2.append(bn_cv2_name)
+
+            # cv2 phụ thuộc vào cv1 (left+right) + tất cả Bottleneck outputs
+            current_to_prev[cv2_bn_name] = prev_bn_layer_names_for_cv2
+            prev_bn_layer_name = cv2_bn_name
+            idx_to_bn_layer_name[i] = cv2_bn_name
+
+            m = C3k2PrunedBn
             n = 1
 
         elif m == 'C3k2PrunedAttn':

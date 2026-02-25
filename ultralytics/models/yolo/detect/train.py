@@ -15,6 +15,7 @@ from ultralytics.data import build_dataloader, build_yolo_dataset
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.nn.tasks_pruned import DetectionModelPruned
 from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
 from ultralytics.utils.patches import override_configs
 from ultralytics.utils.plotting import plot_images, plot_labels
@@ -149,18 +150,25 @@ class DetectionTrainer(BaseTrainer):
             self.model.set_head_attr(max_det=self.args.max_det)
         # TODO: self.model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc
 
-    def get_model(self, cfg: str | None = None, weights: str | None = None, verbose: bool = True):
+    def get_model(self, cfg: str | None = None, weights: str | None = None, verbose: bool = True, maskbndict=None):
         """Return a YOLO detection model.
 
         Args:
             cfg (str, optional): Path to model configuration file.
             weights (str, optional): Path to model weights.
             verbose (bool): Whether to display model information.
+            maskbndict (dict, optional): Pruning masks dict for building pruned model.
 
         Returns:
             (DetectionModel): YOLO detection model.
         """
-        model = DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
+        if getattr(self, 'finetune', False) and maskbndict is not None:
+            LOGGER.info("Finetune mode: building DetectionModelPruned with maskbndict")
+            model = DetectionModelPruned(
+                maskbndict, cfg, ch=self.data["channels"], nc=self.data["nc"], verbose=verbose and RANK == -1,
+            )
+        else:
+            model = DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
         if weights:
             model.load(weights)
         return model
