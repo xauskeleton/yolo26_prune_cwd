@@ -376,9 +376,17 @@ def main(opt):
                 # C3kPruned: cv1(x), cv2(x) với x = right_half của C3k2.cv1
                 if pattern_c3k_first.fullmatch(current_bn_layer_name) is not None:
                     # Guard: chỉ chunk nếu KHÔNG phải Bottleneck cv2 (sequential)
-                    # C3k cv1/cv2: parallel → cần chunk (không nằm trong ignore_bn_list)
-                    # Bottleneck cv2: sequential → KHÔNG chunk (nằm trong ignore_bn_list vì add=True)
-                    if current_bn_layer_name not in ignore_bn_list:
+                    # C3k cv1/cv2: parallel → cần chunk
+                    # Bottleneck cv1: đầu tiên trong chain → cần chunk (nhận right_half)
+                    # Bottleneck cv2: sequential → KHÔNG chunk (nhận cv1 output)
+                    # Phân biệt bằng cấu trúc: Bottleneck không có cv3, C3k có cv3
+                    is_bottleneck_cv2 = False
+                    m_cv2 = re.fullmatch(r"model\.\d+\.m\.0\.cv2\.bn", current_bn_layer_name)
+                    if m_cv2:
+                        parent = current_bn_layer_name.rsplit('.cv2.bn', 1)[0]
+                        if f"{parent}.cv3.bn" not in maskbndict:
+                            is_bottleneck_cv2 = True
+                    if not is_bottleneck_cv2:
                         in_channels_mask = in_channels_mask.chunk(2, 0)[1]
 
                 # BUG FIX: SPPF second conv - dynamic n_param thay vì hardcode 4
