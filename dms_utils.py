@@ -680,15 +680,19 @@ def compute_l1_loss(model, ignore_bn_list):
     return l1
 
 
-def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml'):
+def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml', divisor=8):
     """
     Extract learned `a` params from DMS training checkpoint → YAML.
+
+    Clamp per layer theo paper: a ∈ [0, 1 - x_min/x_max]
+    x_min = divisor (minimum channels to keep), x_max = original channels.
 
     Output YAML can be used with: prune.py --layer-ratio dms_ratios.yaml
 
     Args:
         ckpt_path: Path to checkpoint (.pt)
         save_path: Output YAML path
+        divisor: Minimum channels to keep per layer (default 8)
 
     Returns:
         dict: {bn_name: pruning_ratio}
@@ -700,9 +704,19 @@ def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml'):
     if not a_params:
         raise ValueError(f"No dms_a_params found in {ckpt_path}!")
 
+    # Get BN channel counts from model state_dict
+    state_dict = ckpt.get('model', ckpt).state_dict() if hasattr(ckpt.get('model', {}), 'state_dict') else ckpt.get('state_dict', {})
+    bn_channels = {}
+    for key, val in state_dict.items():
+        if key.endswith('.bn.weight') or key.endswith('.bn.running_mean'):
+            bn_name = key.rsplit('.', 1)[0]  # remove .weight/.running_mean
+            bn_channels[bn_name] = val.shape[0]
+
     ratios = {}
     for name, a in a_params.items():
-        val = float(a.clamp(0.01, 0.95).item())
+        n_channels = bn_channels.get(name, 256)
+        a_max = 1.0 - divisor / n_channels
+        val = float(a.clamp(0.0, a_max).item())
         ratios[name] = round(val, 4)
 
     with open(save_path, 'w') as f:
@@ -710,7 +724,7 @@ def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml'):
 
     # Print summary
     avg = sum(ratios.values()) / len(ratios)
-    print(f"Extracted {len(ratios)} DMS ratios to {save_path}")
+    print(f"Extracted {len(ratios)} DMS ratios to {save_path} (divisor={divisor})")
     print(f"  Average pruning ratio: {avg:.4f}")
     print(f"  Min: {min(ratios.values()):.4f}, Max: {max(ratios.values()):.4f}")
 

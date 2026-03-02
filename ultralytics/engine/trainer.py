@@ -339,6 +339,7 @@ class BaseTrainer:
         self.a_params = {}
         self.dms_hooks = []
         self.dms_importance = getattr(self, 'dms_importance', 'gamma')
+        self.dms_divisor = getattr(self, 'dms_divisor', 8)
         self.taylor_buffers = {}
 
         if self.dms_enabled:
@@ -353,8 +354,8 @@ class BaseTrainer:
                 f"importance={self.dms_importance}"
             )
 
-            # Tắt AMP (giống sparsity training)
-            self.args.amp = False
+            # Giữ AMP cho DMS (paper gốc dùng AMP)
+            # Scaler chỉ dùng cho main optimizer, DMS optimizer xử lý riêng
 
             # Build ignore list nếu chưa có (sparsity đã build nếu sr > 0)
             if not self.ignore_bn_list:
@@ -367,9 +368,9 @@ class BaseTrainer:
                 if isinstance(m, nn.BatchNorm2d) and name not in self.ignore_bn_list:
                     prunable_bns[name] = m
 
-            # Create learnable a params (init = target ratio)
+            # Create learnable a params (init = 0 → mask ≈ 1, resource loss drives a toward target)
             for name, m in prunable_bns.items():
-                a = nn.Parameter(torch.tensor(float(self.dms_target), device=self.device))
+                a = nn.Parameter(torch.tensor(0.0, device=self.device))
                 self.a_params[name] = a
                 # Init taylor buffer (zeros → fallback to gamma until populated)
                 if self.dms_importance == 'taylor':
@@ -424,11 +425,14 @@ class BaseTrainer:
                 LOGGER.info(f"Freezing layer '{k}'")
                 v.requires_grad = False
             elif not v.requires_grad and v.dtype.is_floating_point:  # only floating point Tensor can require gradients
-                LOGGER.warning(
-                    f"setting 'requires_grad=True' for frozen layer '{k}'. "
-                    "See ultralytics.engine.trainer for customization of frozen layers."
-                )
-                v.requires_grad = True
+                if getattr(self, 'dms_freeze', False):
+                    pass  # DMS freeze mode: keep model weights frozen
+                else:
+                    LOGGER.warning(
+                        f"setting 'requires_grad=True' for frozen layer '{k}'. "
+                        "See ultralytics.engine.trainer for customization of frozen layers."
+                    )
+                    v.requires_grad = True
 
         # Check AMP
         self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
@@ -501,6 +505,8 @@ class BaseTrainer:
             layers_cfg = getattr(self, 'cwd_layers', 'neck')
             if layers_cfg == "neck":
                 layer_indices = [13, 16, 19, 22]
+            elif layers_cfg == "backbone":
+                layer_indices = [2, 4, 6, 8]
             else:  # "all"
                 layer_indices = [2, 4, 6, 8, 13, 16, 19, 22]
 
@@ -619,6 +625,61 @@ class BaseTrainer:
                             # Decouple inference and loss calculations for improved compile performance
                             preds = self.model(batch["img"])
                             loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
+                        elif self.dms_enabled:
+                            # ====== DMS NaN debug: test forward KHÔNG có DMS hooks ======
+                            if i == 0 and not getattr(self, '_dms_debug_done', False):
+                                self._dms_debug_done = True
+                                # Test 1: forward KHÔNG hooks
+                                for h in self.dms_hooks:
+                                    h.remove()
+                                with torch.no_grad():
+                                    _loss_no_hook, _ = self.model(batch)
+                                _vals = [l.item() for l in _loss_no_hook]
+                                LOGGER.info(f"[DMS-DEBUG] Forward WITHOUT hooks: loss={_vals}")
+                                # Đăng ký lại hooks
+                                self.dms_hooks.clear()
+                                from dms_utils import make_soft_mask_hook
+                                for name, m in unwrap_model(self.model).named_modules():
+                                    if isinstance(m, nn.BatchNorm2d) and name in self.a_params:
+                                        hook = m.register_forward_hook(make_soft_mask_hook(
+                                            name, self.a_params,
+                                            importance=self.dms_importance,
+                                            taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
+                                        ))
+                                        self.dms_hooks.append(hook)
+                                # Test 2: forward CÓ hooks
+                                with torch.no_grad():
+                                    _loss_hook, _ = self.model(batch)
+                                _vals2 = [l.item() for l in _loss_hook]
+                                LOGGER.info(f"[DMS-DEBUG] Forward WITH hooks:    loss={_vals2}")
+                                # Test 3: check BN weights cho NaN
+                                _nan_bns = []
+                                for name, m in unwrap_model(self.model).named_modules():
+                                    if isinstance(m, nn.BatchNorm2d):
+                                        if m.weight.isnan().any():
+                                            _nan_bns.append(f"{name}.weight")
+                                        if m.bias.isnan().any():
+                                            _nan_bns.append(f"{name}.bias")
+                                        if m.running_mean is not None and m.running_mean.isnan().any():
+                                            _nan_bns.append(f"{name}.running_mean")
+                                        if m.running_var is not None and m.running_var.isnan().any():
+                                            _nan_bns.append(f"{name}.running_var")
+                                if _nan_bns:
+                                    LOGGER.error(f"[DMS-DEBUG] NaN in BN params: {_nan_bns}")
+                                else:
+                                    LOGGER.info(f"[DMS-DEBUG] All BN params are finite")
+                                # Test 4: check tất cả model weights
+                                _nan_params = []
+                                for name, p in unwrap_model(self.model).named_parameters():
+                                    if p.isnan().any() or p.isinf().any():
+                                        _nan_params.append(name)
+                                if _nan_params:
+                                    LOGGER.error(f"[DMS-DEBUG] NaN/Inf weights: {_nan_params}")
+                                else:
+                                    LOGGER.info(f"[DMS-DEBUG] All model weights are finite")
+                            # ====== end debug ======
+
+                            loss, self.loss_items = self.model(batch)
                         else:
                             loss, self.loss_items = self.model(batch)
                         self.loss = loss.sum()
@@ -666,7 +727,13 @@ class BaseTrainer:
                     if getattr(self, 'sr', 0.0) > 0:
                         self.loss.backward()
                     elif self.dms_enabled:
-                        self.loss.backward()
+                        if getattr(self, 'dms_freeze', False):
+                            # Freeze: model không có grad, không cần scaler
+                            if self.loss.isfinite():
+                                self.loss.backward()
+                        else:
+                            # Non-freeze: dùng scaler cho model grads
+                            self.scaler.scale(self.loss).backward()
                     elif self.cwd_enabled:
                         self.loss.backward()
                     else:
@@ -1022,15 +1089,45 @@ class BaseTrainer:
             self.optimizer.zero_grad()
         # ============================= disable scaler/grad clip =============================
         elif getattr(self, 'dms_enabled', False):
-            # DMS mode: no scaler, model optimizer + separate dms_optimizer
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-            self.dms_optimizer.step()
-            self.dms_optimizer.zero_grad()
-            # Clamp a to valid range [0.01, 0.95]
-            with torch.no_grad():
+            if getattr(self, 'dms_freeze', False):
+                # ===== FREEZE MODE: không cần scaler (model đóng băng) =====
+                # Chỉ step DMS optimizer, skip nếu NaN
+                dms_skip = False
                 for a in self.a_params.values():
-                    a.clamp_(0.05, 0.95)
+                    if a.grad is not None and not torch.isfinite(a.grad).all():
+                        dms_skip = True
+                        break
+                if not dms_skip:
+                    self.dms_optimizer.step()
+                self.dms_optimizer.zero_grad()
+                self.optimizer.zero_grad()
+            else:
+                # ===== NON-FREEZE MODE: scaler cho main, thủ công cho DMS =====
+                dms_scale = self.scaler.get_scale()
+                # Main optimizer qua scaler chuẩn
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad()
+                # DMS optimizer: unscale thủ công
+                dms_skip = False
+                for a in self.a_params.values():
+                    if a.grad is not None:
+                        a.grad.div_(dms_scale)
+                        if not torch.isfinite(a.grad).all():
+                            dms_skip = True
+                if not dms_skip:
+                    self.dms_optimizer.step()
+                self.dms_optimizer.zero_grad()
+
+            # Clamp a to valid range [0, 1 - divisor/N] per layer
+            with torch.no_grad():
+                divisor = getattr(self, 'dms_divisor', 8)
+                for name, a in self.a_params.items():
+                    n_channels = self.bn_channels.get(name, 256)
+                    a_max = 1.0 - divisor / n_channels
+                    a.clamp_(0.0, a_max)
         # ============================= CWD: skip scaler =============================
         elif getattr(self, 'cwd_enabled', False):
             self.optimizer.step()

@@ -580,4 +580,6 @@ python prune.py \
     --layer-ratio layer_ratio.\
     
 python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5 --divisor 8
+python prune.py --weights weights/yolo26m.pt --cfg cfg/yolo26m.yaml --model-size m --prune-ratio 0.5 --divisor 8 --layer-ratio dms_ratios.yaml
+
     """
