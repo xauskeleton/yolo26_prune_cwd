@@ -108,6 +108,28 @@ model.train(
 )
 ```
 
+## dms_utils.py - Cac ham co san
+
+### Pruning helpers
+- `make_divisible_channels(channels, max_channels, divisor)` → int: Lam tron channels den boi so cua divisor (8/16)
+- `get_layer_ratio(layer_name, layer_ratio_cfg, default_ratio)` → float: Lay prune ratio cho 1 layer (exact match > layer index > group name > default)
+- `build_pruned_yaml(cfg, model_size, nc)` → dict: Build pruned YAML tu original config, map module sang Pruned versions
+- `build_ignore_bn_list(model)` → list: List BN layers khong duoc prune (residual Bottleneck, PSABlock)
+
+### DMS core
+- `make_soft_mask_hook(bn_name, a_params, importance, taylor_buffers)` → hook: Forward hook ap soft mask sau BN (mask = Sigmoid(N*(c'-a)))
+- `profile_per_layer_flops(model, imgsz, device)` → (dict, float): Profile FLOPs/MACs per Conv2d layer
+- `build_conv_bn_mapping(model, ignore_bn_list)` → (conv_bn_map, bn_channels): Mapping Conv2d → output BN + input BN
+- `compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels, total_flops, target_ratio)` → tensor: GFLOPs resource constraint loss
+- `compute_l1_loss(model, ignore_bn_list)` → tensor: L1 penalty tren BN gamma (Σ|γ|)
+
+### DMS extract
+- `extract_ratios_from_checkpoint(ckpt_path, save_path, divisor)` → dict: Extract a params tu checkpoint → YAML file dung voi prune.py --layer-ratio
+
+### Internal helpers (khong can goi truc tiep)
+- `_resolve_internal_in_bn(conv_name, layer_idx, bn_channels)`: Resolve in_bn cho conv trong C3k2 blocks
+- `_resolve_detect_in_bn(conv_name, layer_idx, scale_inputs)`: Resolve in_bn cho Detect head convs
+
 ## Files chinh da chinh sua
 - `ultralytics/engine/model.py`: them args SR/DMS/CWD/finetune vao train()
 - `ultralytics/engine/trainer.py`: xu ly setup + training loop cho tat ca modes
