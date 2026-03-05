@@ -810,6 +810,22 @@ class BaseTrainer:
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
 
+            # ============================= SR epoch logging ==========================
+            if getattr(self, 'sr', 0.0) > 0 and RANK in {-1, 0}:
+                srtmp = self.sr * (1 - 0.9 * epoch / self.epochs)
+                gammas = []
+                for k, m in unwrap_model(self.model).named_modules():
+                    if isinstance(m, nn.BatchNorm2d) and k not in self.ignore_bn_list:
+                        gammas.append(m.weight.data.abs().cpu())
+                if gammas:
+                    all_gamma = torch.cat(gammas)
+                    sparsity = (all_gamma < 0.01).float().mean().item() * 100
+                    gamma_mean = all_gamma.mean().item()
+                    gamma_std = all_gamma.std().item()
+                    self.sr_metrics = {"sr/sparsity": sparsity, "sr/gamma_mean": gamma_mean, "sr/gamma_std": gamma_std}
+                    LOGGER.info(f"[SR] Epoch {epoch}: sr_tmp={srtmp:.6f}, sparsity={sparsity:.1f}%, gamma_mean={gamma_mean:.4f}, gamma_std={gamma_std:.4f}")
+            # ============================= SR epoch logging ==========================
+
             # ============================= DMS epoch logging ==========================
             if getattr(self, 'dms_enabled', False) and self.a_params and RANK in {-1, 0}:
                 avg_a = sum(a.item() for a in self.a_params.values()) / len(self.a_params)
@@ -848,7 +864,8 @@ class BaseTrainer:
 
             self.nan_recovery_attempts = 0
             if RANK in {-1, 0}:
-                self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr})
+                sr_m = getattr(self, 'sr_metrics', {})
+                self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr, **sr_m})
                 self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
                 if self.args.time:
                     self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
