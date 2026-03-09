@@ -493,8 +493,6 @@ class BaseTrainer:
             teacher_path = getattr(self, 'cwd_teacher', None)
             assert teacher_path, "cwd=True requires cwd_teacher='path/to/teacher.pt'"
 
-            self.args.amp = False
-
             # Load + freeze teacher
             self.teacher_model = AutoBackend(teacher_path, fuse=False)
             self.teacher_model.eval().to(self.device)
@@ -705,21 +703,28 @@ class BaseTrainer:
                         import math as _math
                         from cwd_loss import compute_cwd_loss
 
-                        with torch.no_grad():
-                            self.teacher_model(batch["img"])
+                        # CWD warmup: skip first cwd_warmup epochs to let scaler stabilize
+                        cwd_warmup = getattr(self, 'cwd_warmup', 5)
+                        if epoch >= cwd_warmup:
+                            with torch.no_grad():
+                                self.teacher_model(batch["img"])
 
-                        if self.cwd_temp_mode == "dynamic":
-                            progress = epoch / self.epochs
-                            tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
-                        else:
-                            tau = self.cwd_temp_value
+                            if self.cwd_temp_mode == "dynamic":
+                                progress = (epoch - cwd_warmup) / max(self.epochs - cwd_warmup, 1)
+                                tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
+                            else:
+                                tau = self.cwd_temp_value
 
-                        cwd_loss_val = compute_cwd_loss(
-                            self.student_hooks, self.teacher_hooks,
-                            self.cwd_criterion, self.cwd_channel_masks,
-                            self._cwd_layer_weights, temperature=tau,
-                        )
-                        self.loss = self.loss + self._cwd_lambda * cwd_loss_val
+                            cwd_loss_val = compute_cwd_loss(
+                                self.student_hooks, self.teacher_hooks,
+                                self.cwd_criterion, self.cwd_channel_masks,
+                                self._cwd_layer_weights, temperature=tau,
+                            )
+                            # Ramp up lambda linearly over first 5 epochs after warmup
+                            cwd_ramp = min((epoch - cwd_warmup) / 5.0, 1.0)
+                            self.loss = self.loss + cwd_ramp * self._cwd_lambda * cwd_loss_val
+                        elif epoch == cwd_warmup - 1 and ni == 0:
+                            LOGGER.info(f"[CWD] Warmup: CWD will start at epoch {cwd_warmup}")
                     # ============================= CWD loss ==========================
 
                     # Backward
@@ -734,8 +739,6 @@ class BaseTrainer:
                         else:
                             # Non-freeze: dùng scaler cho model grads
                             self.scaler.scale(self.loss).backward()
-                    elif self.cwd_enabled:
-                        self.loss.backward()
                     else:
                         self.scaler.scale(self.loss).backward()
 
@@ -1145,11 +1148,6 @@ class BaseTrainer:
                     n_channels = self.bn_channels.get(name, 256)
                     a_max = 1.0 - divisor / n_channels
                     a.clamp_(0.0, a_max)
-        # ============================= CWD: skip scaler =============================
-        elif getattr(self, 'cwd_enabled', False):
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-        # ============================= CWD: skip scaler =============================
         else:
             self.scaler.unscale_(self.optimizer)  # unscale gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)

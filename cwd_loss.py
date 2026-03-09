@@ -43,15 +43,15 @@ class CWDLoss(nn.Module):
         t = teacher_feats.view(B, C, -1)
 
         # Spatial softmax per channel (Eq 4)
-        s_soft = F.softmax(s / temperature, dim=2)  # [B, C, H*W]
-        t_soft = F.softmax(t / temperature, dim=2)  # [B, C, H*W]
+        s_log_soft = F.log_softmax(s / temperature, dim=2)  # [B, C, H*W]
+        t_soft = F.softmax(t / temperature, dim=2)           # [B, C, H*W]
 
         # KL divergence per channel (Eq 5)
         # F.kl_div expects log-prob as input, prob as target
-        loss = F.kl_div(s_soft.log(), t_soft, reduction='none').sum(dim=2)  # [B, C]
+        loss = F.kl_div(s_log_soft, t_soft, reduction='none').sum(dim=2)  # [B, C]
 
-        # Scale by τ² and average over batch and channels
-        loss = (temperature ** 2) * loss.mean() / C
+        # Scale by τ² and average over batch and channels (Eq 5: τ²/C × Σ_c = τ² × mean_c)
+        loss = (temperature ** 2) * loss.mean()
 
         return loss
 

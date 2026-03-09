@@ -797,6 +797,7 @@ class Model(torch.nn.Module):
         tau_min = args.pop("tau_min", 1.0)
         cwd_layers = args.pop("cwd_layers", "neck")
         cwd_layer_weights = args.pop("cwd_layer_weights", None)
+        cwd_warmup = args.pop("cwd_warmup", 5)
         # ==================== CWD (Channel-Wise Distillation) ====================
 
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
@@ -824,6 +825,7 @@ class Model(torch.nn.Module):
         self.trainer.cwd_layers = cwd_layers
         self.trainer.cwd_layer_weights = cwd_layer_weights
         self.trainer.cwd_maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
+        self.trainer.cwd_warmup = cwd_warmup
         # ==================== CWD params → trainer ====================
 
         # ==================== Finetune pruned model → trainer ====================
