@@ -769,26 +769,17 @@ class Model(torch.nn.Module):
         if args.get("resume"):
             args["resume"] = self.ckpt_path
 
-        # ==================== Cập nhật Sparsity Training ====================
+        # ==================== Pop custom args (Ultralytics bao loi neu gap tham so la) ====================
         sr = args.get("sr", None)
         if sr is not None:
-            args.pop("sr")  # Xóa sr khỏi args để Ultralytics không báo lỗi tham số lạ
-        # ==================== Cập nhật Sparsity Training ====================
-
-        # ==================== DMS (Differentiable Model Scaling) ====================
+            args.pop("sr")
         dms = args.pop("dms", False)
         dms_target = args.pop("dms_target", 0.3)
         dms_lambda = args.pop("dms_lambda", 1.0)
         dms_lr = args.pop("dms_lr", 5e-3)
         dms_freeze = args.pop("dms_freeze", False)
-        dms_importance = args.pop("dms_importance", "gamma")  # 'gamma' or 'taylor'
-        # ==================== DMS (Differentiable Model Scaling) ====================
-
-        # ==================== Finetune pruned model ====================
+        dms_importance = args.pop("dms_importance", "gamma")
         finetune = args.pop("finetune", False)
-        # ==================== Finetune pruned model ====================
-
-        # ==================== CWD (Channel-Wise Distillation) ====================
         cwd = args.pop("cwd", False)
         cwd_teacher = args.pop("cwd_teacher", None)
         cwd_lambda = args.pop("cwd_lambda", 0.5)
@@ -798,24 +789,65 @@ class Model(torch.nn.Module):
         cwd_layers = args.pop("cwd_layers", "neck")
         cwd_layer_weights = args.pop("cwd_layer_weights", None)
         cwd_warmup = args.pop("cwd_warmup", 5)
-        # ==================== CWD (Channel-Wise Distillation) ====================
+        # ==================== Pop custom args ====================
+
+        # ==================== Resume: restore custom args tu checkpoint ====================
+        if args.get("resume"):
+            import torch
+            _ckpt_path = args["resume"]
+            if isinstance(_ckpt_path, (str, Path)) and Path(_ckpt_path).exists():
+                _ckpt = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
+                _saved = _ckpt.get("custom_training_args", {})
+                if _saved:
+                    LOGGER.info(f"[Resume] Found custom_training_args in checkpoint: {list(_saved.keys())}")
+                    # Restore saved values, user-passed kwargs take priority
+                    if sr is None and _saved.get("sr") is not None:
+                        sr = _saved["sr"]
+                    if "dms" not in kwargs and _saved.get("dms"):
+                        dms = _saved["dms"]
+                    if "dms_target" not in kwargs:
+                        dms_target = _saved.get("dms_target", dms_target)
+                    if "dms_lambda" not in kwargs:
+                        dms_lambda = _saved.get("dms_lambda", dms_lambda)
+                    if "dms_lr" not in kwargs:
+                        dms_lr = _saved.get("dms_lr", dms_lr)
+                    if "dms_freeze" not in kwargs:
+                        dms_freeze = _saved.get("dms_freeze", dms_freeze)
+                    if "dms_importance" not in kwargs:
+                        dms_importance = _saved.get("dms_importance", dms_importance)
+                    if "finetune" not in kwargs and _saved.get("finetune"):
+                        finetune = _saved["finetune"]
+                    if "cwd" not in kwargs and _saved.get("cwd"):
+                        cwd = _saved["cwd"]
+                    if "cwd_teacher" not in kwargs and _saved.get("cwd_teacher"):
+                        cwd_teacher = _saved["cwd_teacher"]
+                    if "cwd_lambda" not in kwargs:
+                        cwd_lambda = _saved.get("cwd_lambda", cwd_lambda)
+                    if "cwd_temperature" not in kwargs:
+                        cwd_temperature = _saved.get("cwd_temperature", cwd_temperature)
+                    if "tau_max" not in kwargs:
+                        tau_max = _saved.get("tau_max", tau_max)
+                    if "tau_min" not in kwargs:
+                        tau_min = _saved.get("tau_min", tau_min)
+                    if "cwd_layers" not in kwargs:
+                        cwd_layers = _saved.get("cwd_layers", cwd_layers)
+                    if "cwd_layer_weights" not in kwargs:
+                        cwd_layer_weights = _saved.get("cwd_layer_weights", cwd_layer_weights)
+                    if "cwd_warmup" not in kwargs:
+                        cwd_warmup = _saved.get("cwd_warmup", cwd_warmup)
+                del _ckpt  # free memory
+        # ==================== Resume: restore custom args tu checkpoint ====================
 
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
 
-        # ==================== Cập nhật Sparsity Training ====================
-        self.trainer.sr = sr  # Gán sr vào trainer
-        # ==================== Cập nhật Sparsity Training ====================
-
-        # ==================== DMS params → trainer ====================
+        # ==================== Gan custom args vao trainer ====================
+        self.trainer.sr = sr
         self.trainer.dms = dms
         self.trainer.dms_target = dms_target
         self.trainer.dms_lambda = dms_lambda
         self.trainer.dms_lr = dms_lr
         self.trainer.dms_freeze = dms_freeze
         self.trainer.dms_importance = dms_importance
-        # ==================== DMS params → trainer ====================
-
-        # ==================== CWD params → trainer ====================
         self.trainer.cwd = cwd
         self.trainer.cwd_teacher = cwd_teacher
         self.trainer.cwd_lambda = cwd_lambda
@@ -826,12 +858,9 @@ class Model(torch.nn.Module):
         self.trainer.cwd_layer_weights = cwd_layer_weights
         self.trainer.cwd_maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
         self.trainer.cwd_warmup = cwd_warmup
-        # ==================== CWD params → trainer ====================
-
-        # ==================== Finetune pruned model → trainer ====================
         self.trainer.finetune = finetune
         self.trainer.maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
-        # ==================== Finetune pruned model → trainer ====================
+        # ==================== Gan custom args vao trainer ====================
 
         if not args.get("resume"):  # manually set model only if not resuming
             self.trainer.model = self.trainer.get_model(

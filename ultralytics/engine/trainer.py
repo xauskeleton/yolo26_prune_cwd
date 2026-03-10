@@ -995,6 +995,35 @@ class BaseTrainer:
                 "docs": "https://docs.ultralytics.com",
         }
 
+        # ============================= Custom args: save for resume ==========================
+        ckpt_dict["custom_training_args"] = {
+            "sr": getattr(self, 'sr', None),
+            "dms": getattr(self, 'dms_enabled', False),
+            "dms_target": getattr(self, 'dms_target', 0.3),
+            "dms_lambda": getattr(self, 'dms_lambda', 1.0),
+            "dms_lr": getattr(self, 'dms_lr', 5e-3),
+            "dms_freeze": getattr(self, 'dms_freeze', False),
+            "dms_importance": getattr(self, 'dms_importance', 'gamma'),
+            "finetune": getattr(self, 'finetune', False),
+            "cwd": getattr(self, 'cwd_enabled', False),
+            "cwd_teacher": getattr(self, 'cwd_teacher', None),
+            "cwd_lambda": getattr(self, '_cwd_lambda', 0.5),
+            "cwd_temperature": getattr(self, 'cwd_temperature', 6.0),
+            "tau_max": getattr(self, 'tau_max', 10.0),
+            "tau_min": getattr(self, 'tau_min', 1.0),
+            "cwd_layers": getattr(self, 'cwd_layers', 'neck'),
+            "cwd_layer_weights": getattr(self, '_cwd_layer_weights', None),
+            "cwd_warmup": getattr(self, 'cwd_warmup', 5),
+        }
+        # ============================= Custom args: save for resume ==========================
+
+        # ============================= Finetune: save maskbndict for resume ==========================
+        if getattr(self, 'finetune', False):
+            maskbndict = getattr(self, 'maskbndict', None) or getattr(self, 'cwd_maskbndict', None)
+            if maskbndict is not None:
+                ckpt_dict["maskbndict"] = maskbndict
+        # ============================= Finetune: save maskbndict for resume ==========================
+
         # ============================= DMS: save a params + optimizer ==========================
         if getattr(self, 'dms_enabled', False) and self.a_params:
             ckpt_dict["dms_a_params"] = {
@@ -1098,7 +1127,11 @@ class BaseTrainer:
             cfg = weights.yaml
         elif isinstance(self.args.pretrained, (str, Path)):
             weights, _ = load_checkpoint(self.args.pretrained)
-        self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK == -1)  # calls Model(cfg, weights)
+        # Truyen maskbndict khi resume finetune de build DetectionModelPruned
+        maskbndict = None
+        if getattr(self, 'finetune', False) and ckpt is not None:
+            maskbndict = ckpt.get('maskbndict', None) or getattr(self, 'maskbndict', None)
+        self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK == -1, maskbndict=maskbndict)
         return ckpt
 
     def optimizer_step(self):
