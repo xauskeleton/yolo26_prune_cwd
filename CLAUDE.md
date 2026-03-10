@@ -101,12 +101,80 @@ model.train(
     tau_max=10.0,                   # nhiet do max (dynamic mode)
     tau_min=1.0,                    # nhiet do min (dynamic mode)
     cwd_layers="all",               # "all", "neck", "backbone", hoac list indices
+    cwd_warmup=3,                   # so epoch warmup truoc khi bat CWD (default=3)
     cwd_layer_weights={             # trong so rieng cho tung layer (optional)
         2: 0.3, 4: 0.3, 6: 0.5, 8: 0.5,
         13: 1.0, 16: 1.0, 19: 1.0, 22: 1.5,
     },
 )
 ```
+
+### 6. CWD Learnable (Auto-tune Hyperparameters)
+Tu dong hoc cac hyperparameters cua CWD bang gradient descent thay vi grid search.
+Dua tren Kendall et al. (2018) "Multi-Task Learning Using Uncertainty to Weigh Losses".
+
+```python
+model = YOLO("weights/pruned_div8.pt")
+model.train(
+    data="coco.yaml", epochs=100,
+    finetune=True,
+    cwd=True,
+    cwd_teacher="yolo26m.pt",
+    cwd_learnable=True,              # bat auto-tune mode
+    cwd_learnable_lr=1e-3,           # lr rieng cho learnable params
+    cwd_learnable_tau_init=6.0,      # nhiet do khoi tao
+    cwd_warmup=3,                    # warmup van ap dung
+    cwd_layers="all",                # chon layers distill
+    # cwd_lambda, cwd_temperature, cwd_layer_weights bi BO QUA khi cwd_learnable=True
+)
+```
+
+#### Y tuong
+- Thay vi grid search N lan train de tim tau, lambda, layer_weights toi uu
+  → model tu hoc trong 1 lan train bang gradient-based optimization
+- 4 learnable parameters (nn.Parameter):
+  1. `log_sigma_det`: uncertainty weight cho detection loss
+  2. `log_sigma_cwd`: uncertainty weight cho CWD loss
+  3. `log_tau`: temperature (tau = exp(log_tau), luon duong)
+  4. `cwd_log_layer_weights`: trong so per-layer (softmax → sum=1)
+
+#### Loss formulation (Kendall et al. 2018)
+```
+L = exp(-log_σ_det) × L_det + log_σ_det
+  + ramp × (exp(-log_σ_cwd) × L_cwd + log_σ_cwd)
+```
+- Term `log_σ` la regularization, ngan σ→∞ (model bo loss)
+- `exp(-log_σ)` la precision = 1/(2σ²), tu dong can bang 2 loss
+- Tau la tensor tren computation graph → gradient flow qua softmax/KL div
+- Layer weights dung softmax → bounded, sum=1
+
+#### Implementation details
+- Optimizer rieng: Adam lr=1e-3, tach khoi main optimizer (giong DMS)
+- Clamp: tau ∈ [0.5, 20], log_sigma ∈ [-5, 5] tranh degenerate
+- CWDLoss.forward KHONG can sua — PyTorch tu handle tensor tau
+- Gradient cua learnable params can unscale manually (giong DMS) vi scaler chi biet main optimizer
+- Warmup + ramp up van ap dung nhu fixed CWD
+- Save/resume: luu learnable params + optimizer state vao checkpoint
+
+#### Files can sua
+- `model.py`: them 3 args (cwd_learnable, cwd_learnable_lr, cwd_learnable_tau_init)
+- `trainer.py`: setup learnable params, optimizer rieng, loss computation, optimizer step, logging, save/resume
+- `cwd_loss.py`: them `compute_cwd_loss_learnable()` nhan tensor tau va layer weights
+
+#### Ky vong ket qua
+- 60-70%: bang fixed CWD (van la contribution: 1 lan train thay vi 10+ lan grid search)
+- 20%: tot hon fixed CWD 0.1-0.3 AP50
+- 10%: kem hon do instability
+
+#### CWD fix: warmup + ramp up (fix NaN epoch 1)
+- **Van de**: CWD + AMP scaler gay NaN o epoch dau → mAP=0 vinh vien
+- **Nguyen nhan**: CWD loss qua lon khi chua warmup, scaler scale len → overflow → NaN gradients → scaler skip optimizer step → model hong
+- **Fix hien tai**:
+  1. `cwd_warmup=3`: 3 epoch dau chi train detection loss (khong CWD), scaler on dinh
+  2. Ramp up: sau warmup, cwd_lambda tang dan tu 0 → full trong 5 epochs tiep theo
+  3. Dynamic temp progress tinh tu epoch warmup thay vi epoch 0
+- **Scaler**: chua chac chan scaler lam model tot hon. Dang thu nghiem. Bo scaler thi khong NaN nhung mAP thap hon finetune thong thuong (co the do nguyen nhan khac). Can test them de ket luan.
+- Channel alignment dung mask tu maskbndict (prune.py tao) → chon subset channels teacher khop student, khong can projection layer
 
 ## dms_utils.py - Cac ham co san
 
