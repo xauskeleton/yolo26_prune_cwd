@@ -747,6 +747,13 @@ class BaseTrainer:
                         srtmp = self.sr * (1 - 0.9 * self.epoch / self.epochs)
                         for k, m in unwrap_model(self.model).named_modules():
                             if isinstance(m, nn.BatchNorm2d) and (k not in self.ignore_bn_list):
+                                if m.weight.grad is None:
+                                    if i == 0:  # only log once per epoch
+                                        LOGGER.warning(
+                                            f"[SR] BN '{k}' has weight.grad=None "
+                                            f"(requires_grad={m.weight.requires_grad}), skipping"
+                                        )
+                                    continue
                                 m.weight.grad.data.add_(srtmp * torch.sign(m.weight.data))
                     # ============================= sparsity training ==========================
                 except torch.cuda.OutOfMemoryError:
