@@ -3,7 +3,8 @@
 ## Cau truc project
 ```
 yolo/
-├── prune.py                            # Pruning script chinh
+├── prune.py                            # Pruning script chinh (uniform per-layer ratio)
+├── prune_lamp.py                       # LAMP pruning (adaptive per-layer ratio)
 ├── finetune.py                         # Finetune pruned model
 ├── dms_utils.py                        # DMS utilities (soft mask, resource loss, etc.)
 ├── cwd_loss.py                         # CWD distillation loss
@@ -50,11 +51,19 @@ model.train(
     dms_lambda=1.0,       # trong so resource loss
     dms_lr=5e-3,          # learning rate cho a params
     dms_freeze=False,     # True = dong bang model, chi train a
-    dms_importance="gamma" # 'gamma' hoac 'taylor'
+    dms_importance="gamma", # 'gamma', 'taylor', hoac 'l1'
+    dms_warmup=3,         # so epoch warmup truoc khi DMS bat dau (default=0)
 )
 ```
+- `dms_importance`: criterion de sort channels trong soft mask
+  - `"gamma"`: |BN.weight| (mac dinh, giong paper goc)
+  - `"taylor"`: gradient-based (mask * grad)^2 voi EMA, ly thuyet tot nhat nhung cham hon
+  - `"l1"`: L1 norm cua Conv filter weights, consistent voi L1 norm pruning
+- `dms_warmup`: so epoch warmup truoc khi DMS bat dau (default=0)
+  - Trong warmup: model train binh thuong, a params dong bang, khong co resource loss
+  - Sau warmup: resource loss ramp up linearly trong 5 epochs
 - Output: checkpoint chua `dms_a_params` → extract bang `dms_utils.extract_ratios_from_checkpoint()`
-- Ket qua: file YAML chua per-layer ratio → dung voi `prune.py --layer-ratio`
+- Ket qua: file YAML chua per-layer ratio → dung voi `prune.py --layer-ratio` hoac `prune_l1norm.py --layer-ratio`
 
 ### 3. Pruning (prune.py)
 Cat kenh dua tren BN gamma magnitude.
@@ -109,9 +118,9 @@ model.train(
 )
 ```
 
-### 6. CWD Learnable (Auto-tune Hyperparameters)
-Tu dong hoc cac hyperparameters cua CWD bang gradient descent thay vi grid search.
-Dua tren Kendall et al. (2018) "Multi-Task Learning Using Uncertainty to Weigh Losses".
+### 6. CWD Learnable Temperature
+Tu dong hoc temperature (tau) cua CWD bang gradient descent thay vi grid search.
+Chi hoc tau — lambda va layer_weights giu fixed (learnable lambda/layer_weights khong on dinh).
 
 ```python
 model = YOLO("weights/pruned_div8.pt")
@@ -120,51 +129,38 @@ model.train(
     finetune=True,
     cwd=True,
     cwd_teacher="yolo26m.pt",
-    cwd_learnable=True,              # bat auto-tune mode
-    cwd_learnable_lr=1e-3,           # lr rieng cho learnable params
-    cwd_learnable_tau_init=6.0,      # nhiet do khoi tao
-    cwd_warmup=3,                    # warmup van ap dung
-    cwd_layers="all",                # chon layers distill
-    # cwd_lambda, cwd_temperature, cwd_layer_weights bi BO QUA khi cwd_learnable=True
+    cwd_learnable_tau=True,           # bat learnable temperature
+    cwd_learnable_tau_lr=1e-3,        # lr rieng cho tau (Adam)
+    cwd_learnable_tau_init=6.0,       # tau khoi tao
+    cwd_lambda=0.5,                   # lambda van fixed
+    cwd_warmup=3,                     # warmup van ap dung
+    cwd_layers="all",                 # chon layers distill
+    cwd_layer_weights={               # layer weights van fixed (optional)
+        2: 0.3, 4: 0.3, 6: 0.5, 8: 0.5,
+        13: 1.0, 16: 1.0, 19: 1.0, 22: 1.5,
+    },
 )
 ```
 
 #### Y tuong
-- Thay vi grid search N lan train de tim tau, lambda, layer_weights toi uu
-  → model tu hoc trong 1 lan train bang gradient-based optimization
-- 4 learnable parameters (nn.Parameter):
-  1. `log_sigma_det`: uncertainty weight cho detection loss
-  2. `log_sigma_cwd`: uncertainty weight cho CWD loss
-  3. `log_tau`: temperature (tau = exp(log_tau), luon duong)
-  4. `cwd_log_layer_weights`: trong so per-layer (softmax → sum=1)
-
-#### Loss formulation (Kendall et al. 2018)
-```
-L = exp(-log_σ_det) × L_det + log_σ_det
-  + ramp × (exp(-log_σ_cwd) × L_cwd + log_σ_cwd)
-```
-- Term `log_σ` la regularization, ngan σ→∞ (model bo loss)
-- `exp(-log_σ)` la precision = 1/(2σ²), tu dong can bang 2 loss
-- Tau la tensor tren computation graph → gradient flow qua softmax/KL div
-- Layer weights dung softmax → bounded, sum=1
+- Grid search tau can nhieu lan train → tot thoi gian
+- Tau co loss landscape smooth → gradient tim duoc gia tri tot
+- Lambda va layer_weights KHONG learnable (lambda bat on, layer_weights collapse ve 1 layer)
+- Chi 1 learnable parameter: `log_tau` (tau = exp(log_tau), luon duong)
 
 #### Implementation details
-- Optimizer rieng: Adam lr=1e-3, tach khoi main optimizer (giong DMS)
-- Clamp: tau ∈ [0.5, 20], log_sigma ∈ [-5, 5] tranh degenerate
-- CWDLoss.forward KHONG can sua — PyTorch tu handle tensor tau
-- Gradient cua learnable params can unscale manually (giong DMS) vi scaler chi biet main optimizer
+- `log_tau = nn.Parameter(log(tau_init))` → tau = exp(log_tau).clamp(0.5, 20)
+- Optimizer rieng: Adam lr=1e-3, tach khoi main optimizer
+- Gradient unscale thu cong (giong DMS) vi scaler chi biet main optimizer
+- Clamp: log_tau ∈ [log(0.5), log(20)] tranh degenerate
+- CWDLoss.forward KHONG can sua — PyTorch tu handle tensor tau, gradient flow tu dong
 - Warmup + ramp up van ap dung nhu fixed CWD
-- Save/resume: luu learnable params + optimizer state vao checkpoint
+- Save/resume: luu log_tau + optimizer state vao checkpoint
+- Epoch logging: in tau hien tai va log_tau
 
-#### Files can sua
-- `model.py`: them 3 args (cwd_learnable, cwd_learnable_lr, cwd_learnable_tau_init)
-- `trainer.py`: setup learnable params, optimizer rieng, loss computation, optimizer step, logging, save/resume
-- `cwd_loss.py`: them `compute_cwd_loss_learnable()` nhan tensor tau va layer weights
-
-#### Ky vong ket qua
-- 60-70%: bang fixed CWD (van la contribution: 1 lan train thay vi 10+ lan grid search)
-- 20%: tot hon fixed CWD 0.1-0.3 AP50
-- 10%: kem hon do instability
+#### Files da sua
+- `model.py`: them 3 args (cwd_learnable_tau, cwd_learnable_tau_lr, cwd_learnable_tau_init)
+- `trainer.py`: setup log_tau param, optimizer rieng, optimizer step, logging, save/resume
 
 #### CWD fix: warmup + ramp up (fix NaN epoch 1)
 - **Van de**: CWD + AMP scaler gay NaN o epoch dau → mAP=0 vinh vien
