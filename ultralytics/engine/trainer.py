@@ -1354,30 +1354,11 @@ class BaseTrainer:
                 - metrics (dict | None): Dictionary of validation metrics, or None if validation was skipped.
                 - fitness (float | None): Fitness score for the validation, or None if validation was skipped.
         """
-        # Remove DMS hooks before validation (avoid float16/float32 mismatch with AMP)
-        if getattr(self, 'dms_enabled', False) and self.dms_hooks:
-            for h in self.dms_hooks:
-                h.remove()
-
         if self.ema and self.world_size > 1:
             # Sync EMA buffers from rank 0 to all ranks
             for buffer in self.ema.ema.buffers():
                 dist.broadcast(buffer, src=0)
         metrics = self.validator(self)
-
-        # Re-register DMS hooks after validation
-        if getattr(self, 'dms_enabled', False) and self.dms_hooks:
-            self.dms_hooks.clear()
-            from dms.dms_utils import make_soft_mask_hook
-            for name, m in unwrap_model(self.model).named_modules():
-                if isinstance(m, nn.BatchNorm2d) and name in self.a_params:
-                    hook = m.register_forward_hook(make_soft_mask_hook(
-                        name, self.a_params,
-                        importance=self.dms_importance,
-                        taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
-                        conv_module=self.bn_to_conv.get(name) if self.dms_importance == 'l1' else None,
-                    ))
-                    self.dms_hooks.append(hook)
 
         if metrics is None:
             return None, None

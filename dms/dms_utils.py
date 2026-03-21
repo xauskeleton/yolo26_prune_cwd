@@ -272,8 +272,8 @@ def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=No
                         )
             mask.register_hook(_taylor_backward_hook)
 
-        # Step 5: Apply mask
-        return output * mask.view(1, -1, 1, 1)
+        # Step 5: Apply mask (cast to output dtype to avoid float32/float16 mismatch with AMP)
+        return output * mask.to(dtype=output.dtype).view(1, -1, 1, 1)
 
     return hook
 
