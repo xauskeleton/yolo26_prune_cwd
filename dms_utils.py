@@ -211,12 +211,12 @@ def build_ignore_bn_list(model):
     return list(set(ignore))
 
 
-def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=None):
+def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=None, conv_module=None):
     """
     Create forward hook that applies differentiable soft mask after BN.
 
     Algorithm per forward:
-        1. importance = |BN.gamma| or taylor buffer
+        1. importance = |BN.gamma| or taylor buffer or L1 norm of conv weights
         2. c' = rank(importance) / N  (detached, no grad)
         3. mask = Sigmoid(N * (c' - a))  (grad flows through a)
         4. output *= mask
@@ -225,8 +225,10 @@ def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=No
     Args:
         bn_name: Name of the BN layer
         a_params: Dict {bn_name: nn.Parameter(a)} shared across all hooks
-        importance: 'gamma' (|BN.weight|) or 'taylor' ((mask * grad)^2 with EMA)
+        importance: 'gamma' (|BN.weight|), 'taylor' ((mask * grad)^2 with EMA),
+                    or 'l1' (L1 norm of corresponding Conv filter weights)
         taylor_buffers: Dict {bn_name: Tensor} required when importance='taylor'
+        conv_module: nn.Conv2d module, required when importance='l1'
 
     Returns:
         Hook function for register_forward_hook
@@ -236,7 +238,10 @@ def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=No
 
         # Step 1: Get importance scores
         with torch.no_grad():
-            if importance == 'taylor' and taylor_buffers is not None and bn_name in taylor_buffers:
+            if importance == 'l1' and conv_module is not None:
+                # L1 norm per output filter: sum(|weight[i, :, :, :]|)
+                scores = conv_module.weight.data.abs().sum(dim=[1, 2, 3])
+            elif importance == 'taylor' and taylor_buffers is not None and bn_name in taylor_buffers:
                 scores = taylor_buffers[bn_name]
                 # Fallback to gamma if taylor is all zeros (first few iters)
                 if scores.max() == scores.min():
