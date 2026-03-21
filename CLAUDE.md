@@ -3,22 +3,42 @@
 ## Cau truc project
 ```
 yolo/
-├── prune.py                            # Pruning script chinh (uniform per-layer ratio)
-├── prune_lamp.py                       # LAMP pruning (adaptive per-layer ratio)
-├── finetune.py                         # Finetune pruned model
-├── dms_utils.py                        # DMS utilities (soft mask, resource loss, etc.)
-├── cwd_loss.py                         # CWD distillation loss
+├── pruning/                            # Pruning scripts
+│   ├── prune_common.py                 # Shared pipeline: load_and_prepare, create_masks, finalize_pruning
+│   ├── prune_bn_gamma.py              # BN gamma magnitude pruning (default)
+│   ├── prune_l1norm.py                # L1 norm pruning
+│   ├── prune_taylor.py                # Taylor importance pruning
+│   ├── prune_lamp.py                  # LAMP adaptive per-layer pruning
+│   ├── prune_fpgm.py                  # FPGM geometric median pruning
+│   └── prune_random.py                # Random pruning (baseline)
+├── distillation/                       # Knowledge distillation
+│   ├── cwd_loss.py                    # CWD distillation loss
+│   └── kd_losses.py                   # Response KD, FitNets, MGD losses
+├── dms/                                # Differentiable Model Scaling
+│   ├── dms_utils.py                   # Soft mask, resource loss, FLOPs profiling
+│   └── extract_ratios.py             # Extract DMS ratios from checkpoint → YAML
+├── scripts/                            # Training/finetune scripts
+│   ├── train_sparsity.py              # Sparsity training (SR)
+│   ├── train_dms.py                   # DMS search training
+│   ├── finetune.py                    # Finetune pruned model
+│   ├── finetune_cwd.py                # Finetune with CWD distillation
+│   └── finetune_kd.py                 # Finetune with KD (Response/FitNets/MGD)
+├── tools/                              # Debug & validation tools
+│   ├── check_sparsity.py             # Check BN sparsity of model
+│   ├── debug_dms_flops.py            # Debug DMS FLOPs computation
+│   ├── validate_pruned.py            # Validate pruned model structure
+│   └── visualize_map.py              # Visualize mAP results
 ├── cfg/
-│   └── yolo26m.yaml                    # YAML config cua yolo26
+│   └── yolo26m.yaml                   # YAML config cua yolo26
 ├── ultralytics/
 │   ├── engine/
-│   │   ├── model.py                    # YOLO.train() - nhan tat ca custom args
-│   │   └── trainer.py                  # BaseTrainer - xu ly SR/DMS/CWD/finetune
+│   │   ├── model.py                   # YOLO.train() - nhan tat ca custom args
+│   │   └── trainer.py                 # BaseTrainer - xu ly SR/DMS/CWD/finetune
 │   └── nn/
-│       ├── tasks_pruned.py             # Build pruned model tu masks
+│       ├── tasks_pruned.py            # Build pruned model tu masks
 │       └── modules/
-│           ├── block_pruned.py         # C3k2Pruned, C3k2PrunedBn, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
-│           └── head_pruned.py          # DetectPruned
+│           ├── block_pruned.py        # C3k2Pruned, C3k2PrunedBn, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
+│           └── head_pruned.py         # DetectPruned
 ```
 
 ## Pipeline tong quat
@@ -62,21 +82,32 @@ model.train(
 - `dms_warmup`: so epoch warmup truoc khi DMS bat dau (default=0)
   - Trong warmup: model train binh thuong, a params dong bang, khong co resource loss
   - Sau warmup: resource loss ramp up linearly trong 5 epochs
-- Output: checkpoint chua `dms_a_params` → extract bang `dms_utils.extract_ratios_from_checkpoint()`
-- Ket qua: file YAML chua per-layer ratio → dung voi `prune.py --layer-ratio` hoac `prune_l1norm.py --layer-ratio`
+- Output: checkpoint chua `dms_a_params` → extract bang `python dms/extract_ratios.py --ckpt <path>`
+- Ket qua: file YAML chua per-layer ratio → dung voi `pruning/prune_*.py --layer-ratio`
 
-### 3. Pruning (prune.py)
-Cat kenh dua tren BN gamma magnitude.
+### 3. Pruning (6 methods)
+6 pruning methods, tat ca dung chung pipeline tu `pruning/prune_common.py`.
 ```bash
-# Co ban
-python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+# BN gamma (default)
+python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
 
-# Day du
-python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml \
-    --model-size m --prune-ratio 0.5 --divisor 8 --save-dir weights/
+# L1 norm
+python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
 
-# Voi DMS per-layer ratio
-python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml \
+# Taylor importance
+python pruning/prune_taylor.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3 --data VOC.yaml
+
+# LAMP (adaptive per-layer)
+python pruning/prune_lamp.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+
+# FPGM (geometric median)
+python pruning/prune_fpgm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+
+# Random (baseline)
+python pruning/prune_random.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+
+# Voi DMS per-layer ratio (bat ky method nao)
+python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml \
     --prune-ratio 0.3 --layer-ratio dms_ratios.yaml
 ```
 Args:
@@ -172,7 +203,29 @@ model.train(
 - **Scaler**: chua chac chan scaler lam model tot hon. Dang thu nghiem. Bo scaler thi khong NaN nhung mAP thap hon finetune thong thuong (co the do nguyen nhan khac). Can test them de ket luan.
 - Channel alignment dung mask tu maskbndict (prune.py tao) → chon subset channels teacher khop student, khong can projection layer
 
-## dms_utils.py - Cac ham co san
+### 7. KD Methods (Response KD, FitNets, MGD)
+Ngoai CWD, co them 3 phuong phap KD khac, chon qua `kd_method` arg.
+```python
+model = YOLO("weights/pruned_div8.pt")
+model.train(
+    data="coco.yaml", epochs=100,
+    finetune=True,
+    cwd=True,                          # bat KD pipeline
+    cwd_teacher="yolo26m.pt",          # teacher model
+    kd_method="response",              # "cwd", "response", "fitnets", "mgd"
+    cwd_lambda=0.5,                    # trong so KD loss
+)
+```
+- `kd_method="cwd"`: Channel-Wise Distillation (default, feature-based)
+- `kd_method="response"`: Response-based KD (logit distillation)
+- `kd_method="fitnets"`: FitNets (intermediate feature mimicking)
+- `kd_method="mgd"`: Masked Generative Distillation
+
+#### DMS validation fix: AMP dtype mismatch
+- **Van de**: DMS hooks tao float32 output, AMP cast model sang float16 → RuntimeError khi validation
+- **Fix**: Remove DMS hooks truoc validation, re-register sau validation trong `validate()` method
+
+## dms/dms_utils.py - Cac ham co san
 
 ### Pruning helpers
 - `make_divisible_channels(channels, max_channels, divisor)` → int: Lam tron channels den boi so cua divisor (8/16)
@@ -188,27 +241,29 @@ model.train(
 - `compute_l1_loss(model, ignore_bn_list)` → tensor: L1 penalty tren BN gamma (Σ|γ|)
 
 ### DMS extract
-- `extract_ratios_from_checkpoint(ckpt_path, save_path, divisor)` → dict: Extract a params tu checkpoint → YAML file dung voi prune.py --layer-ratio
+- `extract_ratios_from_checkpoint(ckpt_path, save_path, divisor)` → dict: Extract a params tu checkpoint → YAML file dung voi pruning/prune_*.py --layer-ratio
 
 ### Internal helpers (khong can goi truc tiep)
 - `_resolve_internal_in_bn(conv_name, layer_idx, bn_channels)`: Resolve in_bn cho conv trong C3k2 blocks
 - `_resolve_detect_in_bn(conv_name, layer_idx, scale_inputs)`: Resolve in_bn cho Detect head convs
 
 ## Files chinh da chinh sua
-- `ultralytics/engine/model.py`: them args SR/DMS/CWD/finetune vao train()
+- `ultralytics/engine/model.py`: them args SR/DMS/CWD/KD/finetune vao train()
 - `ultralytics/engine/trainer.py`: xu ly setup + training loop cho tat ca modes
-- `prune.py`: script pruning chinh
-- `dms_utils.py`: soft mask hooks, resource loss, FLOPs profiling
-- `cwd_loss.py`: CWD loss, feature hooks, channel alignment
+- `pruning/prune_common.py`: shared pruning pipeline
+- `pruning/prune_*.py`: 6 pruning methods
+- `dms/dms_utils.py`: soft mask hooks, resource loss, FLOPs profiling
+- `distillation/cwd_loss.py`: CWD loss, feature hooks, channel alignment
+- `distillation/kd_losses.py`: Response KD, FitNets, MGD losses
 - `ultralytics/nn/tasks_pruned.py`: parse_model_pruned, DetectionModelPruned
 - `ultralytics/nn/modules/block_pruned.py`: cac module pruned
 - `ultralytics/nn/modules/head_pruned.py`: DetectPruned
 
 ## Test commands (5 sizes)
 ```bash
-python prune.py --weights weights/yolo26n.pt --cfg cfg/yolo26m.yaml --model-size n --prune-ratio 0.5 --divisor 8
-python prune.py --weights weights/yolo26s.pt --cfg cfg/yolo26m.yaml --model-size s --prune-ratio 0.5 --divisor 8
-python prune.py --weights weights/yolo26m.pt --cfg cfg/yolo26m.yaml --model-size m --prune-ratio 0.5 --divisor 8
-python prune.py --weights weights/yolo26l.pt --cfg cfg/yolo26m.yaml --model-size l --prune-ratio 0.5 --divisor 8
-python prune.py --weights weights/yolo26x.pt --cfg cfg/yolo26m.yaml --model-size x --prune-ratio 0.5 --divisor 8
+python pruning/prune_bn_gamma.py --weights weights/yolo26n.pt --cfg cfg/yolo26m.yaml --model-size n --prune-ratio 0.5 --divisor 8
+python pruning/prune_bn_gamma.py --weights weights/yolo26s.pt --cfg cfg/yolo26m.yaml --model-size s --prune-ratio 0.5 --divisor 8
+python pruning/prune_bn_gamma.py --weights weights/yolo26m.pt --cfg cfg/yolo26m.yaml --model-size m --prune-ratio 0.5 --divisor 8
+python pruning/prune_bn_gamma.py --weights weights/yolo26l.pt --cfg cfg/yolo26m.yaml --model-size l --prune-ratio 0.5 --divisor 8
+python pruning/prune_bn_gamma.py --weights weights/yolo26x.pt --cfg cfg/yolo26m.yaml --model-size x --prune-ratio 0.5 --divisor 8
 ```
