@@ -197,7 +197,11 @@ def unzip_file(
             if ".." in Path(f).parts:
                 LOGGER.warning(f"Potentially insecure file path: {f}, skipping extraction.")
                 continue
-            zipObj.extract(f, extract_path)
+            try:
+                zipObj.extract(f, extract_path)
+            except FileExistsError:
+                # Directory already exists from a previous interrupted extraction, skip it
+                pass
 
     return path  # return unzip dir
 

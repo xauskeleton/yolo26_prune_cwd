@@ -2,14 +2,18 @@
 Extract DMS learned pruning ratios from training checkpoint → YAML.
 
 Usage:
-    python extract_dms_ratios.py --ckpt runs/train/weights/last.pt --output dms_ratios.yaml
+    python extract_dms_ratios.py --ckpt runs/detect/train/weights/lasta.pt --output dms_ratios.yaml
 
 Then use with prune.py:
     python prune.py --weights last.pt --layer-ratio dms_ratios.yaml
 """
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 import argparse
-from dms_utils import extract_ratios_from_checkpoint
+from dms.dms_utils import extract_ratios_from_checkpoint
 
 
 def main():

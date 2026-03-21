@@ -71,6 +71,16 @@ python finetune.py
 python speed.py
 ```
 
+**Pipeline L1 norm (don gian nhat, khong can SR):**
+```bash
+# Prune truc tiep tu pretrained model
+python prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
+
+# Finetune (co the kem CWD learnable tau)
+python finetune.py
+python speed.py
+```
+
 ---
 
 ## Cai dat
@@ -151,7 +161,8 @@ if __name__ == '__main__':
 | `dms_lambda` | float | `1.0` | Trong so resource loss |
 | `dms_lr` | float | `5e-3` | Learning rate cho a params (Adam rieng) |
 | `dms_freeze` | bool | `False` | True = dong bang model, chi train a params |
-| `dms_importance` | str | `"gamma"` | `"gamma"` hoac `"taylor"` |
+| `dms_importance` | str | `"gamma"` | `"gamma"`, `"taylor"`, hoac `"l1"` |
+| `dms_warmup` | int | `0` | So epoch warmup truoc khi DMS bat dau |
 
 **`dms_target`** — Ti le FLOPs muon giam:
 
@@ -180,6 +191,12 @@ if __name__ == '__main__':
 |------|----------|
 | `"gamma"` | Nhanh, don gian. Dung `\|BN.weight\|` |
 | `"taylor"` | Chinh xac hon, can vai epoch de on dinh. Dung `(mask * grad)^2` voi EMA |
+| `"l1"` | L1 norm cua Conv filter. Consistent voi L1 norm pruning, khong can SR training |
+
+**`dms_warmup`** — So epoch warmup:
+- Trong warmup: model train binh thuong, `a` params dong bang, khong co resource loss
+- Sau warmup: resource loss ramp up linearly trong 5 epochs tiep theo
+- Khuyen nghi: `2` ~ `5` epoch de model on dinh truoc khi DMS bat dau
 
 ### Extract ratios sau DMS
 
@@ -224,21 +241,36 @@ if __name__ == '__main__':
         data="VOC.yaml", epochs=80,
         dms=True, dms_target=0.3, dms_importance="taylor",
     )
+
+    # L1 norm importance + warmup (consistent voi L1 norm pruning)
+    model = YOLO("weights/best.pt")
+    model.train(
+        data="VOC.yaml", epochs=50,
+        dms=True, dms_target=0.3,
+        dms_importance="l1", dms_warmup=3,
+    )
 ```
 
 ### Log
 
 ```
+[DMS] Epoch 0: WARMUP (1/3), a params frozen
+[DMS] Epoch 1: WARMUP (2/3), a params frozen
+[DMS] Epoch 2: WARMUP (3/3), a params frozen
+[DMS] Epoch 3: avg_a=0.0034, min=0.0000, max=0.0100, ramp=0.20
 [DMS] Epoch 10: avg_a=0.2847, min=0.0500, max=0.6234
 ```
+- Warmup: a params dong bang, model train binh thuong
 - `avg_a` tien dan ve `dms_target`
 - `min/max` cho thay su phan bo: layer nao giu nhieu (min), layer nao prune nhieu (max)
+- `ramp`: resource loss ramp up dan tu 0 → 1 trong 5 epoch sau warmup
 
 ---
 
 ## 3. Channel Pruning
 
-Cat kenh dua tren BN gamma (sau sparsity training) hoac per-layer ratio (tu DMS).
+Cat kenh dua tren BN gamma (`prune.py`) hoac L1 norm cua Conv filter (`prune_l1norm.py`).
+L1 norm khong can Sparsity Training, co the dung truc tiep tren pretrained model.
 
 ### CLI Arguments
 
@@ -269,6 +301,12 @@ python prune.py \
 
 # Per-layer ratio tu DMS
 python prune.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --layer-ratio dms_ratios.yaml
+
+# L1 norm pruning (khong can Sparsity Training)
+python prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+
+# L1 norm + per-layer ratio tu DMS
+python prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --layer-ratio dms_ratios.yaml
 ```
 
 **`--prune-ratio`**:
@@ -373,6 +411,9 @@ if __name__ == '__main__':
 | `cwd_layers` | str | `"neck"` | `"neck"` hoac `"all"` |
 | `cwd_layer_weights` | dict/None | `None` | Trong so rieng tung layer |
 | `cwd_warmup` | int | `3` | So epoch warmup truoc khi bat CWD |
+| `cwd_learnable_tau` | bool | `False` | Tu dong hoc temperature bang gradient |
+| `cwd_learnable_tau_lr` | float | `1e-3` | Learning rate cho tau (Adam rieng) |
+| `cwd_learnable_tau_init` | float | `6.0` | Tau khoi tao |
 
 **`cwd_lambda`**:
 
@@ -440,6 +481,17 @@ if __name__ == '__main__':
             13: 1.0, 16: 1.0, 19: 1.0, 22: 1.5,
         },
     )
+
+    # Learnable temperature (tu dong hoc tau, khong can grid search)
+    model = YOLO("weights/pruned_div8.pt")
+    model.train(
+        data="VOC.yaml", epochs=100, finetune=True,
+        cwd=True, cwd_teacher="weights/best.pt",
+        cwd_learnable_tau=True,           # bat learnable T
+        cwd_learnable_tau_lr=1e-3,        # lr cho tau
+        cwd_learnable_tau_init=6.0,       # tau khoi tao
+        cwd_lambda=0.5, cwd_warmup=3,
+    )
 ```
 
 ---
@@ -478,7 +530,8 @@ FPS             |           121.5 |           176.4 |    45.2%
 | | `dms_lambda` | 1.0 | 0.5 ~ 5.0 |
 | | `dms_lr` | 5e-3 | 1e-3 ~ 1e-2 |
 | | `dms_freeze` | False | True (nhanh) / False (chinh xac) |
-| | `dms_importance` | "gamma" | "gamma" (nhanh) / "taylor" (chinh xac) |
+| | `dms_importance` | "gamma" | "gamma" / "taylor" / "l1" |
+| | `dms_warmup` | 0 | 0 ~ 5 (khuyen nghi 2-3) |
 | **CWD** | `cwd_lambda` | 0.5 | 0.3 ~ 1.0 |
 | | `cwd_temperature` | 6.0 | 4.0 ~ 10.0 hoac "dynamic" |
 | | `tau_max` | 10.0 | 5.0 ~ 15.0 (chi khi dynamic) |

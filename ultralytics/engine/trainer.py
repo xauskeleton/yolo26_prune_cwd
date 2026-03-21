@@ -343,7 +343,7 @@ class BaseTrainer:
         self.taylor_buffers = {}
 
         if self.dms_enabled:
-            from dms_utils import (
+            from dms.dms_utils import (
                 build_ignore_bn_list, profile_per_layer_flops,
                 build_conv_bn_mapping, make_soft_mask_hook,
             )
@@ -385,12 +385,25 @@ class BaseTrainer:
                 unwrap_model(self.model), self.ignore_bn_list
             )
 
+            # Build BN→Conv mapping for L1 norm importance
+            self.bn_to_conv = {}
+            if self.dms_importance == 'l1':
+                modules_dict = dict(unwrap_model(self.model).named_modules())
+                for bn_name in prunable_bns:
+                    conv_name = bn_name[:-2] + 'conv'  # model.X.cv1.bn → model.X.cv1.conv
+                    if conv_name in modules_dict and isinstance(modules_dict[conv_name], nn.Conv2d):
+                        self.bn_to_conv[bn_name] = modules_dict[conv_name]
+                    else:
+                        LOGGER.warning(f"[DMS] Conv not found for {bn_name}, fallback to gamma")
+                LOGGER.info(f"[DMS] L1 norm importance: mapped {len(self.bn_to_conv)}/{len(prunable_bns)} BN→Conv pairs")
+
             # Register forward hooks on prunable BNs
             for name, m in prunable_bns.items():
                 hook = m.register_forward_hook(make_soft_mask_hook(
                     name, self.a_params,
                     importance=self.dms_importance,
                     taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
+                    conv_module=self.bn_to_conv.get(name) if self.dms_importance == 'l1' else None,
                 ))
                 self.dms_hooks.append(hook)
 
@@ -487,7 +500,7 @@ class BaseTrainer:
         self.cwd_enabled = getattr(self, 'cwd', False)
         if self.cwd_enabled:
             import math as _math
-            from cwd_loss import CWDLoss, setup_hooks, build_cwd_channel_masks
+            from distillation.cwd_loss import CWDLoss, setup_hooks, build_cwd_channel_masks
             from ultralytics.nn.autobackend import AutoBackend
 
             teacher_path = getattr(self, 'cwd_teacher', None)
@@ -523,16 +536,27 @@ class BaseTrainer:
                 self.cwd_channel_masks = {}
 
             # Temperature
-            temp_cfg = getattr(self, 'cwd_temperature', 6.0)
-            if isinstance(temp_cfg, str) and temp_cfg == "dynamic":
-                self.cwd_temp_mode = "dynamic"
-                self.cwd_temp_max = getattr(self, 'tau_max', 10.0)
-                self.cwd_temp_min = getattr(self, 'tau_min', 1.0)
+            self._cwd_learnable_tau = getattr(self, 'cwd_learnable_tau', False)
+            if self._cwd_learnable_tau:
+                import math as _math
+                self.cwd_temp_mode = "learnable"
+                tau_init = getattr(self, 'cwd_learnable_tau_init', 6.0)
+                self.cwd_log_tau = nn.Parameter(
+                    torch.tensor(_math.log(tau_init), device=self.device)
+                )
+                tau_lr = getattr(self, 'cwd_learnable_tau_lr', 1e-3)
+                self.cwd_tau_optimizer = torch.optim.Adam([self.cwd_log_tau], lr=tau_lr)
+                LOGGER.info(f"[CWD] Learnable tau: init={tau_init:.1f}, lr={tau_lr}")
             else:
-                self.cwd_temp_mode = "fixed"
-                self.cwd_temp_value = float(temp_cfg)
+                temp_cfg = getattr(self, 'cwd_temperature', 6.0)
+                if isinstance(temp_cfg, str) and temp_cfg == "dynamic":
+                    self.cwd_temp_mode = "dynamic"
+                    self.cwd_temp_max = getattr(self, 'tau_max', 10.0)
+                    self.cwd_temp_min = getattr(self, 'tau_min', 1.0)
+                else:
+                    self.cwd_temp_mode = "fixed"
+                    self.cwd_temp_value = float(temp_cfg)
 
-            self.cwd_criterion = CWDLoss()
             self._cwd_lambda = getattr(self, 'cwd_lambda', 0.5)
 
             # Per-layer weights: {idx: weight} → {layer_name: weight}
@@ -542,12 +566,52 @@ class BaseTrainer:
                 for idx, w in raw_weights.items():
                     self._cwd_layer_weights[f"model.{idx}"] = w
 
-            LOGGER.info(f"[CWD] ENABLED: teacher={teacher_path}, lambda={self._cwd_lambda}")
-            LOGGER.info(f"[CWD] layers={self.cwd_layer_names}, temp={temp_cfg}")
+            # KD method selection: cwd (default), response, fitnets, mgd
+            self._kd_method = getattr(self, 'kd_method', 'cwd')
+
+            if self._kd_method == "cwd":
+                self.cwd_criterion = CWDLoss()
+            elif self._kd_method == "response":
+                from distillation.kd_losses import ResponseKDLoss
+                self.cwd_criterion = ResponseKDLoss()
+            elif self._kd_method == "fitnets":
+                from distillation.kd_losses import FitNetsLoss
+                normalize = getattr(self, 'fitnets_normalize', True)
+                self.cwd_criterion = FitNetsLoss(normalize=normalize)
+            elif self._kd_method == "mgd":
+                from distillation.kd_losses import MGDLoss
+                mgd_mask_ratio = getattr(self, 'mgd_mask_ratio', 0.5)
+                self.cwd_criterion = MGDLoss(mask_ratio=mgd_mask_ratio)
+
+                # MGD cần biết channel sizes → chạy dummy forward để lấy
+                LOGGER.info("[MGD] Detecting channel sizes for generators...")
+                dummy = torch.zeros(1, 3, self.args.imgsz, self.args.imgsz, device=self.device)
+                with torch.no_grad():
+                    unwrap_model(self.model)(dummy)
+                    self.teacher_model(dummy)
+
+                for name in self.cwd_layer_names:
+                    s_ch = self.student_hooks[name].features.shape[1]
+                    t_ch = self.teacher_hooks[name].features.shape[1]
+                    self.cwd_criterion.add_generator(name, s_ch, t_ch)
+                    LOGGER.info(f"[MGD] {name}: student={s_ch}ch → teacher={t_ch}ch")
+
+                # Move generators lên device, thêm vào optimizer
+                self.cwd_criterion.to(self.device)
+                self._mgd_optimizer = torch.optim.Adam(
+                    self.cwd_criterion.parameters(), lr=1e-3
+                )
+            else:
+                raise ValueError(f"Unknown kd_method: {self._kd_method}. "
+                                 f"Choose from: cwd, response, fitnets, mgd")
+
+            LOGGER.info(f"[KD] ENABLED: method={self._kd_method}, teacher={teacher_path}, lambda={self._cwd_lambda}")
+            temp_info = f"learnable (init={getattr(self, 'cwd_learnable_tau_init', 6.0)})" if self._cwd_learnable_tau else self.cwd_temp_mode
+            LOGGER.info(f"[KD] layers={self.cwd_layer_names}, temp={temp_info}")
             if self._cwd_layer_weights:
-                LOGGER.info(f"[CWD] layer_weights={self._cwd_layer_weights}")
+                LOGGER.info(f"[KD] layer_weights={self._cwd_layer_weights}")
             if getattr(self.args, 'resume', False):
-                LOGGER.info("[CWD] Resuming CWD training...")
+                LOGGER.info("[KD] Resuming KD training...")
         # ============================= CWD (Channel-Wise Distillation) ==========================
 
     def _do_train(self):
@@ -636,13 +700,14 @@ class BaseTrainer:
                                 LOGGER.info(f"[DMS-DEBUG] Forward WITHOUT hooks: loss={_vals}")
                                 # Đăng ký lại hooks
                                 self.dms_hooks.clear()
-                                from dms_utils import make_soft_mask_hook
+                                from dms.dms_utils import make_soft_mask_hook
                                 for name, m in unwrap_model(self.model).named_modules():
                                     if isinstance(m, nn.BatchNorm2d) and name in self.a_params:
                                         hook = m.register_forward_hook(make_soft_mask_hook(
                                             name, self.a_params,
                                             importance=self.dms_importance,
                                             taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
+                                            conv_module=self.bn_to_conv.get(name) if self.dms_importance == 'l1' else None,
                                         ))
                                         self.dms_hooks.append(hook)
                                 # Test 2: forward CÓ hooks
@@ -686,46 +751,77 @@ class BaseTrainer:
 
                         # ============================= DMS loss ==========================
                         if self.dms_enabled:
-                            from dms_utils import compute_resource_loss
-                            loss_resource = compute_resource_loss(
-                                self.a_params, self.conv_flops, self.conv_bn_map,
-                                self.bn_channels, self.total_flops, self.dms_target,
-                            )
-                            self.loss = self.loss + self.dms_lambda * loss_resource
+                            dms_warmup = getattr(self, 'dms_warmup', 0)
+                            if epoch >= dms_warmup:
+                                from dms.dms_utils import compute_resource_loss
+                                loss_resource = compute_resource_loss(
+                                    self.a_params, self.conv_flops, self.conv_bn_map,
+                                    self.bn_channels, self.total_flops, self.dms_target,
+                                )
+                                # Ramp up resource loss over 5 epochs after warmup
+                                dms_ramp = min((epoch - dms_warmup) / 5.0, 1.0)
+                                self.loss = self.loss + dms_ramp * self.dms_lambda * loss_resource
                         # ============================= DMS loss ==========================
 
                         self.tloss = (
                             self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
                         )
 
-                    # ============================= CWD loss ==========================
+                    # ============================= KD loss (CWD/Response/FitNets/MGD) ==========================
                     if getattr(self, 'cwd_enabled', False):
                         import math as _math
-                        from cwd_loss import compute_cwd_loss
 
-                        # CWD warmup: skip first cwd_warmup epochs to let scaler stabilize
                         cwd_warmup = getattr(self, 'cwd_warmup', 5)
                         if epoch >= cwd_warmup:
                             with torch.no_grad():
                                 self.teacher_model(batch["img"])
 
-                            if self.cwd_temp_mode == "dynamic":
+                            # Temperature (dùng cho CWD và Response KD)
+                            if self.cwd_temp_mode == "learnable":
+                                tau = self.cwd_log_tau.exp().clamp(0.5, 20.0)
+                            elif self.cwd_temp_mode == "dynamic":
                                 progress = (epoch - cwd_warmup) / max(self.epochs - cwd_warmup, 1)
                                 tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
                             else:
                                 tau = self.cwd_temp_value
 
-                            cwd_loss_val = compute_cwd_loss(
-                                self.student_hooks, self.teacher_hooks,
-                                self.cwd_criterion, self.cwd_channel_masks,
-                                self._cwd_layer_weights, temperature=tau,
-                            )
+                            # Dispatch theo kd_method
+                            kd_method = getattr(self, '_kd_method', 'cwd')
+                            if kd_method == "cwd":
+                                from distillation.cwd_loss import compute_cwd_loss
+                                kd_loss_val = compute_cwd_loss(
+                                    self.student_hooks, self.teacher_hooks,
+                                    self.cwd_criterion, self.cwd_channel_masks,
+                                    self._cwd_layer_weights, temperature=tau,
+                                )
+                            elif kd_method == "response":
+                                from distillation.kd_losses import compute_response_kd_loss
+                                kd_loss_val = compute_response_kd_loss(
+                                    self.student_hooks, self.teacher_hooks,
+                                    self.cwd_criterion, self.cwd_channel_masks,
+                                    self._cwd_layer_weights, temperature=tau,
+                                )
+                            elif kd_method == "fitnets":
+                                from distillation.kd_losses import compute_fitnets_loss
+                                kd_loss_val = compute_fitnets_loss(
+                                    self.student_hooks, self.teacher_hooks,
+                                    self.cwd_criterion, self.cwd_channel_masks,
+                                    self._cwd_layer_weights,
+                                )
+                            elif kd_method == "mgd":
+                                from distillation.kd_losses import compute_mgd_loss
+                                kd_loss_val = compute_mgd_loss(
+                                    self.student_hooks, self.teacher_hooks,
+                                    self.cwd_criterion, self.cwd_channel_masks,
+                                    self._cwd_layer_weights,
+                                )
+
                             # Ramp up lambda linearly over first 5 epochs after warmup
                             cwd_ramp = min((epoch - cwd_warmup) / 5.0, 1.0)
-                            self.loss = self.loss + cwd_ramp * self._cwd_lambda * cwd_loss_val
+                            self.loss = self.loss + cwd_ramp * self._cwd_lambda * kd_loss_val
                         elif epoch == cwd_warmup - 1 and ni == 0:
-                            LOGGER.info(f"[CWD] Warmup: CWD will start at epoch {cwd_warmup}")
-                    # ============================= CWD loss ==========================
+                            LOGGER.info(f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {cwd_warmup}")
+                    # ============================= KD loss ==========================
 
                     # Backward
                     # ============================= disable scaler ==========================
@@ -838,24 +934,37 @@ class BaseTrainer:
 
             # ============================= DMS epoch logging ==========================
             if getattr(self, 'dms_enabled', False) and self.a_params and RANK in {-1, 0}:
+                dms_warmup = getattr(self, 'dms_warmup', 0)
                 avg_a = sum(a.item() for a in self.a_params.values()) / len(self.a_params)
                 min_a = min(a.item() for a in self.a_params.values())
                 max_a = max(a.item() for a in self.a_params.values())
-                LOGGER.info(
-                    f"[DMS] Epoch {epoch}: avg_a={avg_a:.4f}, "
-                    f"min={min_a:.4f}, max={max_a:.4f}"
-                )
+                if epoch < dms_warmup:
+                    LOGGER.info(
+                        f"[DMS] Epoch {epoch}: WARMUP ({epoch+1}/{dms_warmup}), "
+                        f"a params frozen"
+                    )
+                else:
+                    dms_ramp = min((epoch - dms_warmup) / 5.0, 1.0)
+                    LOGGER.info(
+                        f"[DMS] Epoch {epoch}: avg_a={avg_a:.4f}, "
+                        f"min={min_a:.4f}, max={max_a:.4f}"
+                        f"{f', ramp={dms_ramp:.2f}' if dms_ramp < 1.0 else ''}"
+                    )
             # ============================= DMS epoch logging ==========================
 
             # ============================= CWD epoch logging ==========================
             if getattr(self, 'cwd_enabled', False) and RANK in {-1, 0}:
                 import math as _math
-                if self.cwd_temp_mode == "dynamic":
+                if self.cwd_temp_mode == "learnable":
+                    tau_val = self.cwd_log_tau.exp().clamp(0.5, 20.0).item()
+                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau_val:.4f} (learnable, log_tau={self.cwd_log_tau.item():.4f})")
+                elif self.cwd_temp_mode == "dynamic":
                     progress = epoch / self.epochs
                     tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
+                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau:.2f}")
                 else:
                     tau = self.cwd_temp_value
-                LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau:.2f}")
+                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau:.2f}")
             # ============================= CWD epoch logging ==========================
 
             self.run_callbacks("on_train_epoch_end")
@@ -1011,6 +1120,7 @@ class BaseTrainer:
             "dms_lr": getattr(self, 'dms_lr', 5e-3),
             "dms_freeze": getattr(self, 'dms_freeze', False),
             "dms_importance": getattr(self, 'dms_importance', 'gamma'),
+            "dms_warmup": getattr(self, 'dms_warmup', 0),
             "finetune": getattr(self, 'finetune', False),
             "cwd": getattr(self, 'cwd_enabled', False),
             "cwd_teacher": getattr(self, 'cwd_teacher', None),
@@ -1021,6 +1131,12 @@ class BaseTrainer:
             "cwd_layers": getattr(self, 'cwd_layers', 'neck'),
             "cwd_layer_weights": getattr(self, '_cwd_layer_weights', None),
             "cwd_warmup": getattr(self, 'cwd_warmup', 5),
+            "cwd_learnable_tau": getattr(self, '_cwd_learnable_tau', False),
+            "cwd_learnable_tau_lr": getattr(self, 'cwd_learnable_tau_lr', 1e-3),
+            "cwd_learnable_tau_init": getattr(self, 'cwd_learnable_tau_init', 6.0),
+            "kd_method": getattr(self, '_kd_method', 'cwd'),
+            "mgd_mask_ratio": getattr(self, 'mgd_mask_ratio', 0.5),
+            "fitnets_normalize": getattr(self, 'fitnets_normalize', True),
         }
         # ============================= Custom args: save for resume ==========================
 
@@ -1057,6 +1173,12 @@ class BaseTrainer:
                 "layers": getattr(self, 'cwd_layers', 'neck'),
                 "layer_weights": getattr(self, 'cwd_layer_weights', None),
             }
+            # Save learnable tau state
+            if getattr(self, '_cwd_learnable_tau', False) and hasattr(self, 'cwd_log_tau'):
+                ckpt_dict["cwd_learnable_tau_state"] = {
+                    "log_tau": self.cwd_log_tau.detach().cpu(),
+                    "optimizer": self.cwd_tau_optimizer.state_dict(),
+                }
             maskbndict = getattr(self, 'cwd_maskbndict', None)
             if maskbndict is not None:
                 ckpt_dict["maskbndict"] = maskbndict
@@ -1149,16 +1271,18 @@ class BaseTrainer:
             self.optimizer.zero_grad()
         # ============================= disable scaler/grad clip =============================
         elif getattr(self, 'dms_enabled', False):
+            dms_in_warmup = self.epoch < getattr(self, 'dms_warmup', 0)
             if getattr(self, 'dms_freeze', False):
                 # ===== FREEZE MODE: không cần scaler (model đóng băng) =====
-                # Chỉ step DMS optimizer, skip nếu NaN
-                dms_skip = False
-                for a in self.a_params.values():
-                    if a.grad is not None and not torch.isfinite(a.grad).all():
-                        dms_skip = True
-                        break
-                if not dms_skip:
-                    self.dms_optimizer.step()
+                # Chỉ step DMS optimizer, skip nếu NaN hoặc warmup
+                if not dms_in_warmup:
+                    dms_skip = False
+                    for a in self.a_params.values():
+                        if a.grad is not None and not torch.isfinite(a.grad).all():
+                            dms_skip = True
+                            break
+                    if not dms_skip:
+                        self.dms_optimizer.step()
                 self.dms_optimizer.zero_grad()
                 self.optimizer.zero_grad()
             else:
@@ -1170,15 +1294,16 @@ class BaseTrainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
                 self.optimizer.zero_grad()
-                # DMS optimizer: unscale thủ công
-                dms_skip = False
-                for a in self.a_params.values():
-                    if a.grad is not None:
-                        a.grad.div_(dms_scale)
-                        if not torch.isfinite(a.grad).all():
-                            dms_skip = True
-                if not dms_skip:
-                    self.dms_optimizer.step()
+                # DMS optimizer: unscale thủ công, skip khi warmup
+                if not dms_in_warmup:
+                    dms_skip = False
+                    for a in self.a_params.values():
+                        if a.grad is not None:
+                            a.grad.div_(dms_scale)
+                            if not torch.isfinite(a.grad).all():
+                                dms_skip = True
+                    if not dms_skip:
+                        self.dms_optimizer.step()
                 self.dms_optimizer.zero_grad()
 
             # Clamp a to valid range [0, 1 - divisor/N] per layer
@@ -1194,6 +1319,25 @@ class BaseTrainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad()
+
+        # MGD generator optimizer step (riêng biệt, giống DMS)
+        if getattr(self, '_kd_method', None) == 'mgd' and hasattr(self, '_mgd_optimizer'):
+            self._mgd_optimizer.step()
+            self._mgd_optimizer.zero_grad()
+
+        # CWD learnable tau optimizer step
+        if getattr(self, '_cwd_learnable_tau', False) and hasattr(self, 'cwd_tau_optimizer'):
+            # Unscale gradient manually (scaler chỉ biết main optimizer)
+            scale = self.scaler.get_scale()
+            if self.cwd_log_tau.grad is not None:
+                self.cwd_log_tau.grad.div_(scale)
+                if torch.isfinite(self.cwd_log_tau.grad).all():
+                    self.cwd_tau_optimizer.step()
+            self.cwd_tau_optimizer.zero_grad()
+            # Clamp log_tau để tau ∈ [0.5, 20]
+            with torch.no_grad():
+                import math as _math
+                self.cwd_log_tau.clamp_(_math.log(0.5), _math.log(20.0))
 
         if self.ema:
             self.ema.update(self.model)
@@ -1433,6 +1577,21 @@ class BaseTrainer:
                 self.dms_optimizer.load_state_dict(saved_dms_opt)
                 LOGGER.info("[DMS] Restored dms_optimizer state from checkpoint.")
         # ============================= DMS: restore a_params + optimizer ==========================
+
+        # ============================= CWD: restore learnable tau ==========================
+        if getattr(self, '_cwd_learnable_tau', False) and hasattr(self, 'cwd_log_tau'):
+            saved_tau_state = ckpt.get('cwd_learnable_tau_state', {})
+            if saved_tau_state:
+                saved_log_tau = saved_tau_state.get('log_tau')
+                if saved_log_tau is not None:
+                    with torch.no_grad():
+                        self.cwd_log_tau.copy_(saved_log_tau.to(self.cwd_log_tau.device))
+                    LOGGER.info(f"[CWD] Restored learnable tau={self.cwd_log_tau.exp().item():.4f}")
+                saved_tau_opt = saved_tau_state.get('optimizer')
+                if saved_tau_opt and hasattr(self, 'cwd_tau_optimizer'):
+                    self.cwd_tau_optimizer.load_state_dict(saved_tau_opt)
+                    LOGGER.info("[CWD] Restored tau optimizer state.")
+        # ============================= CWD: restore learnable tau ==========================
 
         self.start_epoch = start_epoch
         if start_epoch > (self.epochs - self.args.close_mosaic):

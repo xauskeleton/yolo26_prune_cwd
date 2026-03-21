@@ -9,11 +9,15 @@ Usage:
     python debug_dms_flops.py --weights yolo26m.pt --imgsz 640
 """
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 import argparse
 import torch
 import torch.nn as nn
 from ultralytics import YOLO
-from dms_utils import (
+from dms.dms_utils import (
     build_ignore_bn_list,
     build_conv_bn_mapping,
     profile_per_layer_flops,

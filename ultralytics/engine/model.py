@@ -779,6 +779,7 @@ class Model(torch.nn.Module):
         dms_lr = args.pop("dms_lr", 5e-3)
         dms_freeze = args.pop("dms_freeze", False)
         dms_importance = args.pop("dms_importance", "gamma")
+        dms_warmup = args.pop("dms_warmup", 0)
         finetune = args.pop("finetune", False)
         cwd = args.pop("cwd", False)
         cwd_teacher = args.pop("cwd_teacher", None)
@@ -789,6 +790,12 @@ class Model(torch.nn.Module):
         cwd_layers = args.pop("cwd_layers", "neck")
         cwd_layer_weights = args.pop("cwd_layer_weights", None)
         cwd_warmup = args.pop("cwd_warmup", 5)
+        cwd_learnable_tau = args.pop("cwd_learnable_tau", False)
+        cwd_learnable_tau_lr = args.pop("cwd_learnable_tau_lr", 1e-3)
+        cwd_learnable_tau_init = args.pop("cwd_learnable_tau_init", 6.0)
+        kd_method = args.pop("kd_method", "cwd")
+        mgd_mask_ratio = args.pop("mgd_mask_ratio", 0.5)
+        fitnets_normalize = args.pop("fitnets_normalize", True)
         # ==================== Pop custom args ====================
 
         # ==================== Resume: restore custom args tu checkpoint ====================
@@ -815,6 +822,8 @@ class Model(torch.nn.Module):
                         dms_freeze = _saved.get("dms_freeze", dms_freeze)
                     if "dms_importance" not in kwargs:
                         dms_importance = _saved.get("dms_importance", dms_importance)
+                    if "dms_warmup" not in kwargs:
+                        dms_warmup = _saved.get("dms_warmup", dms_warmup)
                     if "finetune" not in kwargs and _saved.get("finetune"):
                         finetune = _saved["finetune"]
                     if "cwd" not in kwargs and _saved.get("cwd"):
@@ -835,6 +844,18 @@ class Model(torch.nn.Module):
                         cwd_layer_weights = _saved.get("cwd_layer_weights", cwd_layer_weights)
                     if "cwd_warmup" not in kwargs:
                         cwd_warmup = _saved.get("cwd_warmup", cwd_warmup)
+                    if "cwd_learnable_tau" not in kwargs:
+                        cwd_learnable_tau = _saved.get("cwd_learnable_tau", cwd_learnable_tau)
+                    if "cwd_learnable_tau_lr" not in kwargs:
+                        cwd_learnable_tau_lr = _saved.get("cwd_learnable_tau_lr", cwd_learnable_tau_lr)
+                    if "cwd_learnable_tau_init" not in kwargs:
+                        cwd_learnable_tau_init = _saved.get("cwd_learnable_tau_init", cwd_learnable_tau_init)
+                    if "kd_method" not in kwargs:
+                        kd_method = _saved.get("kd_method", kd_method)
+                    if "mgd_mask_ratio" not in kwargs:
+                        mgd_mask_ratio = _saved.get("mgd_mask_ratio", mgd_mask_ratio)
+                    if "fitnets_normalize" not in kwargs:
+                        fitnets_normalize = _saved.get("fitnets_normalize", fitnets_normalize)
                 del _ckpt  # free memory
         # ==================== Resume: restore custom args tu checkpoint ====================
 
@@ -848,6 +869,7 @@ class Model(torch.nn.Module):
         self.trainer.dms_lr = dms_lr
         self.trainer.dms_freeze = dms_freeze
         self.trainer.dms_importance = dms_importance
+        self.trainer.dms_warmup = dms_warmup
         self.trainer.cwd = cwd
         self.trainer.cwd_teacher = cwd_teacher
         self.trainer.cwd_lambda = cwd_lambda
@@ -858,6 +880,12 @@ class Model(torch.nn.Module):
         self.trainer.cwd_layer_weights = cwd_layer_weights
         self.trainer.cwd_maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
         self.trainer.cwd_warmup = cwd_warmup
+        self.trainer.cwd_learnable_tau = cwd_learnable_tau
+        self.trainer.cwd_learnable_tau_lr = cwd_learnable_tau_lr
+        self.trainer.cwd_learnable_tau_init = cwd_learnable_tau_init
+        self.trainer.kd_method = kd_method
+        self.trainer.mgd_mask_ratio = mgd_mask_ratio
+        self.trainer.fitnets_normalize = fitnets_normalize
         self.trainer.finetune = finetune
         self.trainer.maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
         # ==================== Gan custom args vao trainer ====================

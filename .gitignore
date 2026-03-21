@@ -188,6 +188,7 @@ calibration_*.npy
 *.mkv
 *.webm
 *.jpg
+!ultralytics/assets/*.jpg
 *.jpeg
 *.png
 *.bmp

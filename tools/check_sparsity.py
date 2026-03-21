@@ -1,16 +1,21 @@
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
 from ultralytics import YOLO
-from dms_utils import build_ignore_bn_list
+from dms.dms_utils import build_ignore_bn_list
 
 
 def check_sparsity(model_path, threshold=0.01):
     yolo_model = YOLO(model_path)
     model = yolo_model.model
     model.eval()
+
 
     ignore_bn_list = build_ignore_bn_list(model)
 
