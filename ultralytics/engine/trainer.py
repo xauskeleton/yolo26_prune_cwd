@@ -368,9 +368,14 @@ class BaseTrainer:
                 if isinstance(m, nn.BatchNorm2d) and name not in self.ignore_bn_list:
                     prunable_bns[name] = m
 
-            # Create learnable a params (init = 0 → mask ≈ 1, resource loss drives a toward target)
+            # Create learnable a params
+            # a_init = (1 - sqrt(1 - T)) / 2: nửa giá trị tối ưu lý thuyết
+            # Đủ gần target để gradient hiệu quả, đủ xa để resource loss vẫn có tín hiệu
+            import math
+            T = getattr(self, 'dms_target', 0.3)
+            a_init = (1 - math.sqrt(1 - T)) / 2
             for name, m in prunable_bns.items():
-                a = nn.Parameter(torch.tensor(0.0, device=self.device))
+                a = nn.Parameter(torch.tensor(a_init, device=self.device))
                 self.a_params[name] = a
                 # Init taylor buffer (zeros → fallback to gamma until populated)
                 if self.dms_importance == 'taylor':
