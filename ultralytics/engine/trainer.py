@@ -1297,7 +1297,7 @@ class BaseTrainer:
             self._mgd_optimizer.zero_grad()
 
         # CWD learnable tau optimizer step
-        if self.cwd_temp_mode == "learnable" and hasattr(self, 'cwd_tau_optimizer'):
+        if getattr(self, 'cwd_temp_mode', None) == "learnable" and hasattr(self, 'cwd_tau_optimizer'):
             # Unscale gradient manually (scaler chỉ biết main optimizer)
             scale = self.scaler.get_scale()
             if self.cwd_log_tau.grad is not None:
@@ -1551,7 +1551,7 @@ class BaseTrainer:
         # ============================= DMS: restore a_params + optimizer ==========================
 
         # ============================= CWD: restore learnable tau ==========================
-        if self.cwd_temp_mode == "learnable" and hasattr(self, 'cwd_log_tau'):
+        if getattr(self, 'cwd_temp_mode', None) == "learnable" and hasattr(self, 'cwd_log_tau'):
             saved_tau_state = ckpt.get('cwd_learnable_tau_state', {})
             if saved_tau_state:
                 saved_log_tau = saved_tau_state.get('log_tau')
