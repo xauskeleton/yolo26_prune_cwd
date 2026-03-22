@@ -748,9 +748,7 @@ class BaseTrainer:
                                     self.a_params, self.conv_flops, self.conv_bn_map,
                                     self.bn_channels, self.total_flops, self.dms_target,
                                 )
-                                # Ramp up resource loss over 5 epochs after warmup
-                                dms_ramp = min((epoch - dms_warmup) / 5.0, 1.0)
-                                self.loss = self.loss + dms_ramp * self.dms_lambda * loss_resource
+                                self.loss = self.loss + self.dms_lambda * loss_resource
                         # ============================= DMS loss ==========================
 
                         self.tloss = (
@@ -931,11 +929,9 @@ class BaseTrainer:
                         f"a params frozen"
                     )
                 else:
-                    dms_ramp = min((epoch - dms_warmup) / 5.0, 1.0)
                     LOGGER.info(
                         f"[DMS] Epoch {epoch}: avg_a={avg_a:.4f}, "
                         f"min={min_a:.4f}, max={max_a:.4f}"
-                        f"{f', ramp={dms_ramp:.2f}' if dms_ramp < 1.0 else ''}"
                     )
             # ============================= DMS epoch logging ==========================
 
