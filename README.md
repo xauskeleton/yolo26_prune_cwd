@@ -52,6 +52,8 @@ python scripts/train_sparsity.py
 python scripts/train_dms.py
 python dms/extract_ratios.py --ckpt runs/.../best.pt --output dms_ratios.yaml
 
+
+
 # 3. Prune (chon 1 trong 6 methods)
 python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --layer-ratio dms_ratios.yaml
 
@@ -280,8 +282,7 @@ python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml 
 | Baseline (unpruned) | 0.890 | 0.725 |
 | **L1 Norm** | **0.878** | **0.701** |
 | FPGM | 0.873 | 0.698 |
-| Taylor | 0.872 | 0.693 |
-| BN Gamma + CWD | 0.869 | 0.693 |
+| Taylor | 0.872 | 0.695 |
 | BN Gamma | 0.865 | 0.689 |
 | Random | 0.865 | 0.689 |
 
@@ -335,83 +336,84 @@ if __name__ == '__main__':
         data="VOC.yaml",
         epochs=50,
         finetune=True,
-        cwd=True,
-        cwd_teacher="weights/best.pt",
+        kd=True,
+        kd_teacher="weights/best.pt",
     )
 ```
 
 ### Chon KD method
 
 ```python
+# CWD (default)
+model.train(
+    data="VOC.yaml", epochs=50, finetune=True,
+    kd=True, kd_teacher="weights/best.pt",
+    kd_method="cwd", kd_lambda=0.5,
+)
+
 # Response KD (logit distillation)
 model.train(
     data="VOC.yaml", epochs=50, finetune=True,
-    cwd=True, cwd_teacher="weights/best.pt",
-    kd_method="response", cwd_lambda=0.5,
+    kd=True, kd_teacher="weights/best.pt",
+    kd_method="response", kd_lambda=0.5,
 )
 
 # FitNets (feature mimicking)
 model.train(
     data="VOC.yaml", epochs=50, finetune=True,
-    cwd=True, cwd_teacher="weights/best.pt",
-    kd_method="fitnets", cwd_lambda=0.5,
+    kd=True, kd_teacher="weights/best.pt",
+    kd_method="fitnets", kd_lambda=0.5,
 )
 
 # MGD (masked generative distillation)
 model.train(
     data="VOC.yaml", epochs=50, finetune=True,
-    cwd=True, cwd_teacher="weights/best.pt",
-    kd_method="mgd", cwd_lambda=0.5,
+    kd=True, kd_teacher="weights/best.pt",
+    kd_method="mgd", kd_lambda=0.5,
 )
 ```
 
-### CWD tham so nang cao
+### KD tham so
 
 | Tham so | Kieu | Mac dinh | Mo ta |
 |---------|------|----------|-------|
-| `cwd` | bool | `False` | Bat/tat KD pipeline |
-| `cwd_teacher` | str | `None` | Path teacher model (**BAT BUOC**) |
+| `kd` | bool | `False` | Bat/tat KD pipeline |
+| `kd_teacher` | str | `None` | Path teacher model (**BAT BUOC**) |
 | `kd_method` | str | `"cwd"` | `"cwd"`, `"response"`, `"fitnets"`, `"mgd"` |
-| `cwd_lambda` | float | `0.5` | Trong so KD loss |
-| `cwd_temperature` | float/str | `6.0` | Temperature, hoac `"dynamic"` |
-| `tau_max` | float | `10.0` | Tau max khi dynamic |
-| `tau_min` | float | `1.0` | Tau min khi dynamic |
-| `cwd_layers` | str | `"neck"` | `"neck"` hoac `"all"` |
-| `cwd_layer_weights` | dict/None | `None` | Trong so rieng tung layer |
-| `cwd_warmup` | int | `3` | So epoch warmup truoc khi bat KD |
-| `cwd_learnable_tau` | bool | `False` | Tu dong hoc temperature bang gradient |
-| `cwd_learnable_tau_lr` | float | `1e-3` | Learning rate cho tau (Adam rieng) |
-| `cwd_learnable_tau_init` | float | `6.0` | Tau khoi tao |
+| `kd_lambda` | float | `0.5` | Trong so KD loss |
+| `kd_layers` | str | `"neck"` | `"neck"` hoac `"all"` |
+| `kd_warmup` | int | `5` | So epoch warmup truoc khi bat KD |
 
-### Vi du nang cao
+### CWD tham so (chi ap dung cho kd_method="cwd")
+
+| Tham so | Kieu | Mac dinh | Mo ta |
+|---------|------|----------|-------|
+| `cwd_temperature` | float/str | `9.0` | Fixed temperature, hoac `"learnable"` |
+| `cwd_learnable_tau_lr` | float | `1e-3` | Learning rate cho learnable tau |
+| `cwd_learnable_tau_init` | float | `9.0` | Tau khoi tao khi learnable |
+
+### Vi du CWD nang cao
 
 ```python
 from ultralytics import YOLO
 
 if __name__ == '__main__':
-    # CWD + dynamic temperature + all layers + custom weights
+    # CWD + fixed temperature
     model = YOLO("weights/pruned_div8.pt")
     model.train(
         data="VOC.yaml", epochs=100, finetune=True,
-        cwd=True, cwd_teacher="weights/best.pt",
-        cwd_lambda=0.5,
-        cwd_temperature="dynamic", tau_max=10.0, tau_min=1.0,
-        cwd_layers="all",
-        cwd_layer_weights={
-            2: 0.3, 4: 0.3, 6: 0.5, 8: 0.5,
-            13: 1.0, 16: 1.0, 19: 1.0, 22: 1.5,
-        },
+        kd=True, kd_teacher="weights/best.pt",
+        kd_lambda=0.5, kd_layers="all",
+        cwd_temperature=9.0,
     )
 
     # CWD + learnable temperature (tu dong, khong can grid search)
     model = YOLO("weights/pruned_div8.pt")
     model.train(
         data="VOC.yaml", epochs=100, finetune=True,
-        cwd=True, cwd_teacher="weights/best.pt",
-        cwd_learnable_tau=True,
-        cwd_learnable_tau_lr=1e-3,
-        cwd_learnable_tau_init=6.0,
-        cwd_lambda=0.5, cwd_warmup=3,
+        kd=True, kd_teacher="weights/best.pt",
+        kd_lambda=0.5, kd_layers="all", kd_warmup=3,
+        cwd_temperature="learnable",
     )
 ```
 
@@ -454,12 +456,10 @@ FPS             |           121.5 |           176.4 |    45.2%
 | | `dms_importance` | "gamma" | "gamma" / "taylor" / "l1" |
 | | `dms_warmup` | 0 | 0 ~ 5 (khuyen nghi 2-3) |
 | **KD** | `kd_method` | "cwd" | "cwd" / "response" / "fitnets" / "mgd" |
-| | `cwd_lambda` | 0.5 | 0.3 ~ 1.0 |
-| | `cwd_temperature` | 6.0 | 4.0 ~ 10.0 hoac "dynamic" |
-| | `tau_max` | 10.0 | 5.0 ~ 15.0 (chi khi dynamic) |
-| | `tau_min` | 1.0 | 0.5 ~ 3.0 (chi khi dynamic) |
-| | `cwd_layers` | "neck" | "neck" (nhanh) / "all" (chinh xac) |
-| | `cwd_warmup` | 3 | 1 ~ 5 |
+| | `kd_lambda` | 0.5 | 0.3 ~ 1.0 |
+| | `kd_layers` | "neck" | "neck" (nhanh) / "all" (chinh xac) |
+| | `kd_warmup` | 5 | 1 ~ 5 |
+| | `cwd_temperature` | 9.0 | 4.0 ~ 15.0 hoac "learnable" |
 | **Prune** | `--prune-ratio` | 0.5 | 0.2 ~ 0.7 |
 | | `--divisor` | 8 | 8 (GPU) / 16 (Tensor Cores) |
 | | `--model-size` | m | n / s / m / l / x |
@@ -467,8 +467,8 @@ FPS             |           121.5 |           176.4 |    45.2%
 ### Luu y quan trong
 
 1. **`finetune=True` bat buoc** khi train pruned model.
-2. **Khong ket hop** sr, dms, cwd cung luc. Chi dung 1 che do moi lan train.
-3. **AMP tu dong tat** khi dung sr. DMS va CWD tuong thich AMP.
+2. **Khong ket hop** sr, dms, kd cung luc. Chi dung 1 che do moi lan train.
+3. **AMP tu dong tat** khi dung sr. DMS va KD tuong thich AMP.
 4. **DMS can extract ratios** truoc khi prune (`python dms/extract_ratios.py`).
 5. **KD can teacher model** chua prune (original best.pt).
 6. **Tren Windows** phai co `if __name__ == '__main__':` trong script.
@@ -517,7 +517,7 @@ yolo/
 ├── ultralytics/
 │   ├── engine/
 │   │   ├── model.py                   # YOLO.train() - nhan tat ca custom args
-│   │   └── trainer.py                 # BaseTrainer - xu ly SR/DMS/CWD/KD/finetune
+│   │   └── trainer.py                 # BaseTrainer - xu ly SR/DMS/KD/finetune
 │   └── nn/
 │       ├── tasks_pruned.py            # Build pruned model tu masks
 │       └── modules/
@@ -650,7 +650,7 @@ Voi moi hooked layer i:
   5. CWD loss:
      L_i = (tau^2 / C) * mean(kl_c)
 
-total_loss = det_loss + cwd_lambda * weighted_avg(L_i)
+total_loss = det_loss + kd_lambda * avg(L_i)
 ```
 
 ### Channel alignment
@@ -665,18 +665,15 @@ Khong can projection layer 1x1 vi ta biet chinh xac kenh nao cua teacher map san
 
 ### Warmup + ramp up
 
-- **Van de**: CWD loss qua lon o epoch dau + AMP scaler → overflow → NaN → model hong.
+- **Van de**: KD loss qua lon o epoch dau + AMP scaler → overflow → NaN → model hong.
 - **Fix**:
-  1. `cwd_warmup=3`: 3 epoch dau chi train detection loss (khong CWD)
-  2. Ramp up: sau warmup, `cwd_lambda` tang dan tu 0 → full trong 5 epochs tiep
-  3. Scaler on dinh truoc khi CWD vao
+  1. `kd_warmup=5`: epoch dau chi train detection loss (khong KD)
+  2. Ramp up: sau warmup, `kd_lambda` tang dan tu 0 → full trong 5 epochs tiep
+  3. Scaler on dinh truoc khi KD vao
 
-### Dynamic temperature
+### Learnable temperature
 
-```
-tau = tau_min + 0.5 * (tau_max - tau_min) * (1 + cos(pi * progress))
-progress = (epoch - warmup) / (total_epochs - warmup)
-```
-- Dau training: tau cao (soft) → student de hoc pattern tong quat
-- Giua training: tau thap (sharp) → student hoc chi tiet
-- Cuoi training: tau cao lai → on dinh hoi tu
+- `cwd_temperature="learnable"`: tu dong hoc tau bang gradient descent
+- `log_tau = nn.Parameter(log(tau_init))` → tau = exp(log_tau).clamp(0.5, 20)
+- Optimizer rieng: Adam, tach khoi main optimizer
+- Khong can grid search temperature

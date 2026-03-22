@@ -44,7 +44,7 @@ yolo/
 ## Pipeline tong quat
 ```
 [1] Train baseline → [2] Sparsity training (SR) → [3] DMS search (optional)
-→ [4] Prune (prune.py) → [5] Finetune → [6] CWD distillation (optional)
+→ [4] Prune (prune.py) → [5] Finetune → [6] KD distillation (optional)
 ```
 
 ## Cac che do training
@@ -127,99 +127,70 @@ model.train(data="coco.yaml", epochs=100, finetune=True)
 ```
 - `finetune=True`: load maskbndict tu checkpoint, build DetectionModelPruned
 
-### 5. CWD (Channel-Wise Distillation)
+### 5. Knowledge Distillation (KD)
 Knowledge distillation tu teacher model (full) sang student (pruned).
-```python
-model = YOLO("weights/pruned_div8.pt")
-model.train(
-    data="coco.yaml", epochs=100,
-    finetune=True,
-    cwd=True,
-    cwd_teacher="yolo26m.pt",      # teacher model path
-    cwd_lambda=0.5,                 # trong so CWD loss
-    cwd_temperature="dynamic",      # "dynamic" hoac float (vd: 6.0)
-    tau_max=10.0,                   # nhiet do max (dynamic mode)
-    tau_min=1.0,                    # nhiet do min (dynamic mode)
-    cwd_layers="all",               # "all", "neck", "backbone", hoac list indices
-    cwd_warmup=3,                   # so epoch warmup truoc khi bat CWD (default=3)
-    cwd_layer_weights={             # trong so rieng cho tung layer (optional)
-        2: 0.3, 4: 0.3, 6: 0.5, 8: 0.5,
-        13: 1.0, 16: 1.0, 19: 1.0, 22: 1.5,
-    },
-)
-```
+4 methods: CWD (default), Response KD, FitNets, MGD.
 
-### 6. CWD Learnable Temperature
-Tu dong hoc temperature (tau) cua CWD bang gradient descent thay vi grid search.
-Chi hoc tau — lambda va layer_weights giu fixed (learnable lambda/layer_weights khong on dinh).
+General KD args dung `kd_*`, CWD-specific args giu `cwd_*`.
 
 ```python
 model = YOLO("weights/pruned_div8.pt")
 model.train(
     data="coco.yaml", epochs=100,
     finetune=True,
-    cwd=True,
-    cwd_teacher="yolo26m.pt",
-    cwd_learnable_tau=True,           # bat learnable temperature
-    cwd_learnable_tau_lr=1e-3,        # lr rieng cho tau (Adam)
-    cwd_learnable_tau_init=6.0,       # tau khoi tao
-    cwd_lambda=0.5,                   # lambda van fixed
-    cwd_warmup=3,                     # warmup van ap dung
-    cwd_layers="all",                 # chon layers distill
-    cwd_layer_weights={               # layer weights van fixed (optional)
-        2: 0.3, 4: 0.3, 6: 0.5, 8: 0.5,
-        13: 1.0, 16: 1.0, 19: 1.0, 22: 1.5,
-    },
+    kd=True,                            # bat KD pipeline
+    kd_teacher="yolo26m.pt",            # teacher model path
+    kd_lambda=0.5,                      # trong so KD loss
+    kd_method="cwd",                    # "cwd", "response", "fitnets", "mgd"
+    kd_layers="neck",                   # "all", "neck", "backbone", hoac list indices
+    kd_warmup=5,                        # so epoch warmup truoc khi bat KD (default=5)
+    cwd_temperature=9.0,                # float=fixed tau, "learnable"=auto (CWD only)
 )
 ```
 
-#### Y tuong
-- Grid search tau can nhieu lan train → tot thoi gian
-- Tau co loss landscape smooth → gradient tim duoc gia tri tot
-- Lambda va layer_weights KHONG learnable (lambda bat on, layer_weights collapse ve 1 layer)
-- Chi 1 learnable parameter: `log_tau` (tau = exp(log_tau), luon duong)
+#### KD Args
+- `kd=True`: bat KD pipeline
+- `kd_teacher`: duong dan teacher model
+- `kd_lambda` (float): trong so KD loss, default 0.5
+- `kd_method`: "cwd" (default), "response", "fitnets", "mgd"
+- `kd_layers`: "neck" (default), "all", "backbone", hoac list indices
+- `kd_warmup` (int): so epoch warmup, default 5
 
-#### Implementation details
+#### CWD-specific Args
+- `cwd_temperature`: float (fixed tau, default 9.0) hoac "learnable" (auto)
+- `cwd_learnable_tau_lr` (float): lr cho learnable tau, default 1e-3
+- `cwd_learnable_tau_init` (float): tau khoi tao khi learnable, default 9.0
+
+#### CWD Learnable Temperature
+Tu dong hoc temperature (tau) bang gradient descent thay vi grid search.
+```python
+model.train(
+    ...,
+    kd=True, kd_teacher="yolo26m.pt",
+    kd_method="cwd",
+    cwd_temperature="learnable",        # bat learnable mode
+    cwd_learnable_tau_lr=1e-3,          # lr rieng cho tau (Adam)
+    cwd_learnable_tau_init=9.0,         # tau khoi tao
+)
+```
 - `log_tau = nn.Parameter(log(tau_init))` → tau = exp(log_tau).clamp(0.5, 20)
-- Optimizer rieng: Adam lr=1e-3, tach khoi main optimizer
+- Optimizer rieng: Adam, tach khoi main optimizer
 - Gradient unscale thu cong (giong DMS) vi scaler chi biet main optimizer
-- Clamp: log_tau ∈ [log(0.5), log(20)] tranh degenerate
-- CWDLoss.forward KHONG can sua — PyTorch tu handle tensor tau, gradient flow tu dong
 - Warmup + ramp up van ap dung nhu fixed CWD
 - Save/resume: luu log_tau + optimizer state vao checkpoint
-- Epoch logging: in tau hien tai va log_tau
 
-#### Files da sua
-- `model.py`: them 3 args (cwd_learnable_tau, cwd_learnable_tau_lr, cwd_learnable_tau_init)
-- `trainer.py`: setup log_tau param, optimizer rieng, optimizer step, logging, save/resume
+#### KD Methods
+- `kd_method="cwd"`: Channel-Wise Distillation (default) - spatial softmax per channel → KL div
+- `kd_method="response"`: Response-based KD (Hinton 2015) - channel softmax per spatial → KL div
+- `kd_method="fitnets"`: FitNets (Romero 2015) - MSE giua normalized feature maps
+- `kd_method="mgd"`: Masked Generative Distillation (Yang 2022) - mask channels + generator reconstruct
 
-#### CWD fix: warmup + ramp up (fix NaN epoch 1)
-- **Van de**: CWD + AMP scaler gay NaN o epoch dau → mAP=0 vinh vien
-- **Nguyen nhan**: CWD loss qua lon khi chua warmup, scaler scale len → overflow → NaN gradients → scaler skip optimizer step → model hong
-- **Fix hien tai**:
-  1. `cwd_warmup=3`: 3 epoch dau chi train detection loss (khong CWD), scaler on dinh
-  2. Ramp up: sau warmup, cwd_lambda tang dan tu 0 → full trong 5 epochs tiep theo
-  3. Dynamic temp progress tinh tu epoch warmup thay vi epoch 0
-- **Scaler**: chua chac chan scaler lam model tot hon. Dang thu nghiem. Bo scaler thi khong NaN nhung mAP thap hon finetune thong thuong (co the do nguyen nhan khac). Can test them de ket luan.
+#### KD warmup + ramp up (fix NaN epoch 1)
+- **Van de**: KD + AMP scaler gay NaN o epoch dau → mAP=0 vinh vien
+- **Fix**:
+  1. `kd_warmup=5`: 5 epoch dau chi train detection loss (khong KD), scaler on dinh
+  2. Ramp up: sau warmup, kd_lambda tang dan tu 0 → full trong 5 epochs tiep theo
 - Channel alignment dung mask tu maskbndict (prune.py tao) → chon subset channels teacher khop student, khong can projection layer
-
-### 7. KD Methods (Response KD, FitNets, MGD)
-Ngoai CWD, co them 3 phuong phap KD khac, chon qua `kd_method` arg.
-```python
-model = YOLO("weights/pruned_div8.pt")
-model.train(
-    data="coco.yaml", epochs=100,
-    finetune=True,
-    cwd=True,                          # bat KD pipeline
-    cwd_teacher="yolo26m.pt",          # teacher model
-    kd_method="response",              # "cwd", "response", "fitnets", "mgd"
-    cwd_lambda=0.5,                    # trong so KD loss
-)
-```
-- `kd_method="cwd"`: Channel-Wise Distillation (default, feature-based)
-- `kd_method="response"`: Response-based KD (logit distillation)
-- `kd_method="fitnets"`: FitNets (intermediate feature mimicking)
-- `kd_method="mgd"`: Masked Generative Distillation
 
 #### DMS validation fix: AMP dtype mismatch
 - **Van de**: DMS hooks tao float32 output, AMP cast model sang float16 → RuntimeError khi validation
@@ -248,8 +219,8 @@ model.train(
 - `_resolve_detect_in_bn(conv_name, layer_idx, scale_inputs)`: Resolve in_bn cho Detect head convs
 
 ## Files chinh da chinh sua
-- `ultralytics/engine/model.py`: them args SR/DMS/CWD/KD/finetune vao train()
-- `ultralytics/engine/trainer.py`: xu ly setup + training loop cho tat ca modes
+- `ultralytics/engine/model.py`: them args SR/DMS/KD/finetune vao train()
+- `ultralytics/engine/trainer.py`: xu ly setup + training loop cho tat ca modes (KD general args: kd_*, CWD-specific: cwd_*)
 - `pruning/prune_common.py`: shared pruning pipeline
 - `pruning/prune_*.py`: 6 pruning methods
 - `dms/dms_utils.py`: soft mask hooks, resource loss, FLOPs profiling

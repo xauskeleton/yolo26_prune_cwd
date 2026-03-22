@@ -497,14 +497,14 @@ class BaseTrainer:
         self.run_callbacks("on_pretrain_routine_end")
 
         # ============================= CWD (Channel-Wise Distillation) ==========================
-        self.cwd_enabled = getattr(self, 'cwd', False)
-        if self.cwd_enabled:
+        self.kd_enabled = getattr(self, 'kd', False)
+        if self.kd_enabled:
             import math as _math
-            from distillation.cwd_loss import CWDLoss, setup_hooks, build_cwd_channel_masks
+            from distillation.cwd_loss import CWDLoss, setup_hooks, build_kd_channel_masks
             from ultralytics.nn.autobackend import AutoBackend
 
-            teacher_path = getattr(self, 'cwd_teacher', None)
-            assert teacher_path, "cwd=True requires cwd_teacher='path/to/teacher.pt'"
+            teacher_path = getattr(self, 'kd_teacher', None)
+            assert teacher_path, "kd=True requires kd_teacher='path/to/teacher.pt'"
 
             # Load + freeze teacher
             self.teacher_model = AutoBackend(teacher_path, fuse=False)
@@ -513,7 +513,7 @@ class BaseTrainer:
                 p.requires_grad = False
 
             # Distill layer indices
-            layers_cfg = getattr(self, 'cwd_layers', 'neck')
+            layers_cfg = getattr(self, 'kd_layers', 'neck')
             if layers_cfg == "neck":
                 layer_indices = [13, 16, 19, 22]
             elif layers_cfg == "backbone":
@@ -521,26 +521,26 @@ class BaseTrainer:
             else:  # "all"
                 layer_indices = [2, 4, 6, 8, 13, 16, 19, 22]
 
-            self.cwd_layer_names = [f"model.{i}" for i in layer_indices]
+            self.kd_layer_names = [f"model.{i}" for i in layer_indices]
 
             # Setup passive hooks on student and teacher
-            self.student_hooks = setup_hooks(unwrap_model(self.model), self.cwd_layer_names)
-            self.teacher_hooks = setup_hooks(self.teacher_model.model, self.cwd_layer_names)
+            self.student_hooks = setup_hooks(unwrap_model(self.model), self.kd_layer_names)
+            self.teacher_hooks = setup_hooks(self.teacher_model.model, self.kd_layer_names)
 
             # Build channel masks from maskbndict (if student is pruned)
-            maskbndict = getattr(self, 'cwd_maskbndict', None)
+            maskbndict = getattr(self, 'kd_maskbndict', None)
             if maskbndict is not None:
-                self.cwd_channel_masks = build_cwd_channel_masks(maskbndict, layer_indices)
-                LOGGER.info(f"[CWD] Channel masks: {len(self.cwd_channel_masks)} layers have mismatch")
+                self.kd_channel_masks = build_kd_channel_masks(maskbndict, layer_indices)
+                LOGGER.info(f"[KD] Channel masks: {len(self.kd_channel_masks)} layers have mismatch")
             else:
-                self.cwd_channel_masks = {}
+                self.kd_channel_masks = {}
 
-            # Temperature
-            self._cwd_learnable_tau = getattr(self, 'cwd_learnable_tau', False)
-            if self._cwd_learnable_tau:
+            # Temperature: float=fixed, "learnable"=auto
+            temp_cfg = getattr(self, 'cwd_temperature', 9.0)
+            if isinstance(temp_cfg, str) and temp_cfg == "learnable":
                 import math as _math
                 self.cwd_temp_mode = "learnable"
-                tau_init = getattr(self, 'cwd_learnable_tau_init', 6.0)
+                tau_init = getattr(self, 'cwd_learnable_tau_init', 9.0)
                 self.cwd_log_tau = nn.Parameter(
                     torch.tensor(_math.log(tau_init), device=self.device)
                 )
@@ -548,40 +548,27 @@ class BaseTrainer:
                 self.cwd_tau_optimizer = torch.optim.Adam([self.cwd_log_tau], lr=tau_lr)
                 LOGGER.info(f"[CWD] Learnable tau: init={tau_init:.1f}, lr={tau_lr}")
             else:
-                temp_cfg = getattr(self, 'cwd_temperature', 6.0)
-                if isinstance(temp_cfg, str) and temp_cfg == "dynamic":
-                    self.cwd_temp_mode = "dynamic"
-                    self.cwd_temp_max = getattr(self, 'tau_max', 10.0)
-                    self.cwd_temp_min = getattr(self, 'tau_min', 1.0)
-                else:
-                    self.cwd_temp_mode = "fixed"
-                    self.cwd_temp_value = float(temp_cfg)
+                self.cwd_temp_mode = "fixed"
+                self.cwd_temp_value = float(temp_cfg)
 
-            self._cwd_lambda = getattr(self, 'cwd_lambda', 0.5)
-
-            # Per-layer weights: {idx: weight} → {layer_name: weight}
-            raw_weights = getattr(self, 'cwd_layer_weights', None)
-            self._cwd_layer_weights = {}
-            if raw_weights:
-                for idx, w in raw_weights.items():
-                    self._cwd_layer_weights[f"model.{idx}"] = w
+            self._kd_lambda = getattr(self, 'kd_lambda', 0.5)
 
             # KD method selection: cwd (default), response, fitnets, mgd
             self._kd_method = getattr(self, 'kd_method', 'cwd')
 
             if self._kd_method == "cwd":
-                self.cwd_criterion = CWDLoss()
+                self.kd_criterion = CWDLoss()
             elif self._kd_method == "response":
                 from distillation.kd_losses import ResponseKDLoss
-                self.cwd_criterion = ResponseKDLoss()
+                self.kd_criterion = ResponseKDLoss()
             elif self._kd_method == "fitnets":
                 from distillation.kd_losses import FitNetsLoss
                 normalize = getattr(self, 'fitnets_normalize', True)
-                self.cwd_criterion = FitNetsLoss(normalize=normalize)
+                self.kd_criterion = FitNetsLoss(normalize=normalize)
             elif self._kd_method == "mgd":
                 from distillation.kd_losses import MGDLoss
                 mgd_mask_ratio = getattr(self, 'mgd_mask_ratio', 0.5)
-                self.cwd_criterion = MGDLoss(mask_ratio=mgd_mask_ratio)
+                self.kd_criterion = MGDLoss(mask_ratio=mgd_mask_ratio)
 
                 # MGD cần biết channel sizes → chạy dummy forward để lấy
                 LOGGER.info("[MGD] Detecting channel sizes for generators...")
@@ -590,26 +577,24 @@ class BaseTrainer:
                     unwrap_model(self.model)(dummy)
                     self.teacher_model(dummy)
 
-                for name in self.cwd_layer_names:
+                for name in self.kd_layer_names:
                     s_ch = self.student_hooks[name].features.shape[1]
                     t_ch = self.teacher_hooks[name].features.shape[1]
-                    self.cwd_criterion.add_generator(name, s_ch, t_ch)
+                    self.kd_criterion.add_generator(name, s_ch, t_ch)
                     LOGGER.info(f"[MGD] {name}: student={s_ch}ch → teacher={t_ch}ch")
 
                 # Move generators lên device, thêm vào optimizer
-                self.cwd_criterion.to(self.device)
+                self.kd_criterion.to(self.device)
                 self._mgd_optimizer = torch.optim.Adam(
-                    self.cwd_criterion.parameters(), lr=1e-3
+                    self.kd_criterion.parameters(), lr=1e-3
                 )
             else:
                 raise ValueError(f"Unknown kd_method: {self._kd_method}. "
                                  f"Choose from: cwd, response, fitnets, mgd")
 
-            LOGGER.info(f"[KD] ENABLED: method={self._kd_method}, teacher={teacher_path}, lambda={self._cwd_lambda}")
-            temp_info = f"learnable (init={getattr(self, 'cwd_learnable_tau_init', 6.0)})" if self._cwd_learnable_tau else self.cwd_temp_mode
-            LOGGER.info(f"[KD] layers={self.cwd_layer_names}, temp={temp_info}")
-            if self._cwd_layer_weights:
-                LOGGER.info(f"[KD] layer_weights={self._cwd_layer_weights}")
+            LOGGER.info(f"[KD] ENABLED: method={self._kd_method}, teacher={teacher_path}, lambda={self._kd_lambda}")
+            temp_info = f"learnable (init={getattr(self, 'cwd_learnable_tau_init', 9.0)})" if self.cwd_temp_mode == "learnable" else self.cwd_temp_mode
+            LOGGER.info(f"[KD] layers={self.kd_layer_names}, temp={temp_info}")
             if getattr(self.args, 'resume', False):
                 LOGGER.info("[KD] Resuming KD training...")
         # ============================= CWD (Channel-Wise Distillation) ==========================
@@ -768,59 +753,56 @@ class BaseTrainer:
                         )
 
                     # ============================= KD loss (CWD/Response/FitNets/MGD) ==========================
-                    if getattr(self, 'cwd_enabled', False):
+                    if getattr(self, 'kd_enabled', False):
                         import math as _math
 
-                        cwd_warmup = getattr(self, 'cwd_warmup', 5)
-                        if epoch >= cwd_warmup:
+                        kd_warmup = getattr(self, 'kd_warmup', 5)
+                        if epoch >= kd_warmup:
                             with torch.no_grad():
                                 self.teacher_model(batch["img"])
 
                             # Temperature (dùng cho CWD và Response KD)
                             if self.cwd_temp_mode == "learnable":
                                 tau = self.cwd_log_tau.exp().clamp(0.5, 20.0)
-                            elif self.cwd_temp_mode == "dynamic":
-                                progress = (epoch - cwd_warmup) / max(self.epochs - cwd_warmup, 1)
-                                tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
                             else:
                                 tau = self.cwd_temp_value
 
-                            # Dispatch theo kd_method
-                            kd_method = getattr(self, '_kd_method', 'cwd')
-                            if kd_method == "cwd":
-                                from distillation.cwd_loss import compute_cwd_loss
-                                kd_loss_val = compute_cwd_loss(
-                                    self.student_hooks, self.teacher_hooks,
-                                    self.cwd_criterion, self.cwd_channel_masks,
-                                    self._cwd_layer_weights, temperature=tau,
-                                )
-                            elif kd_method == "response":
-                                from distillation.kd_losses import compute_response_kd_loss
-                                kd_loss_val = compute_response_kd_loss(
-                                    self.student_hooks, self.teacher_hooks,
-                                    self.cwd_criterion, self.cwd_channel_masks,
-                                    self._cwd_layer_weights, temperature=tau,
-                                )
-                            elif kd_method == "fitnets":
-                                from distillation.kd_losses import compute_fitnets_loss
-                                kd_loss_val = compute_fitnets_loss(
-                                    self.student_hooks, self.teacher_hooks,
-                                    self.cwd_criterion, self.cwd_channel_masks,
-                                    self._cwd_layer_weights,
-                                )
-                            elif kd_method == "mgd":
-                                from distillation.kd_losses import compute_mgd_loss
-                                kd_loss_val = compute_mgd_loss(
-                                    self.student_hooks, self.teacher_hooks,
-                                    self.cwd_criterion, self.cwd_channel_masks,
-                                    self._cwd_layer_weights,
-                                )
+                            # Compute KD loss under autocast to match AMP dtypes
+                            with autocast(self.amp):
+                                # Dispatch theo kd_method
+                                kd_method = getattr(self, '_kd_method', 'cwd')
+                                if kd_method == "cwd":
+                                    from distillation.cwd_loss import compute_cwd_loss
+                                    kd_loss_val = compute_cwd_loss(
+                                        self.student_hooks, self.teacher_hooks,
+                                        self.kd_criterion, self.kd_channel_masks,
+                                        temperature=tau,
+                                    )
+                                elif kd_method == "response":
+                                    from distillation.kd_losses import compute_response_kd_loss
+                                    kd_loss_val = compute_response_kd_loss(
+                                        self.student_hooks, self.teacher_hooks,
+                                        self.kd_criterion, self.kd_channel_masks,
+                                        temperature=tau,
+                                    )
+                                elif kd_method == "fitnets":
+                                    from distillation.kd_losses import compute_fitnets_loss
+                                    kd_loss_val = compute_fitnets_loss(
+                                        self.student_hooks, self.teacher_hooks,
+                                        self.kd_criterion, self.kd_channel_masks,
+                                    )
+                                elif kd_method == "mgd":
+                                    from distillation.kd_losses import compute_mgd_loss
+                                    kd_loss_val = compute_mgd_loss(
+                                        self.student_hooks, self.teacher_hooks,
+                                        self.kd_criterion, self.kd_channel_masks,
+                                    )
 
                             # Ramp up lambda linearly over first 5 epochs after warmup
-                            cwd_ramp = min((epoch - cwd_warmup) / 5.0, 1.0)
-                            self.loss = self.loss + cwd_ramp * self._cwd_lambda * kd_loss_val
-                        elif epoch == cwd_warmup - 1 and ni == 0:
-                            LOGGER.info(f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {cwd_warmup}")
+                            kd_ramp = min((epoch - kd_warmup) / 5.0, 1.0)
+                            self.loss = self.loss + kd_ramp * self._kd_lambda * kd_loss_val
+                        elif epoch == kd_warmup - 1 and ni == 0:
+                            LOGGER.info(f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {kd_warmup}")
                     # ============================= KD loss ==========================
 
                     # Backward
@@ -953,18 +935,12 @@ class BaseTrainer:
             # ============================= DMS epoch logging ==========================
 
             # ============================= CWD epoch logging ==========================
-            if getattr(self, 'cwd_enabled', False) and RANK in {-1, 0}:
-                import math as _math
+            if getattr(self, 'kd_enabled', False) and RANK in {-1, 0}:
                 if self.cwd_temp_mode == "learnable":
                     tau_val = self.cwd_log_tau.exp().clamp(0.5, 20.0).item()
                     LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau_val:.4f} (learnable, log_tau={self.cwd_log_tau.item():.4f})")
-                elif self.cwd_temp_mode == "dynamic":
-                    progress = epoch / self.epochs
-                    tau = self.cwd_temp_min + 0.5 * (self.cwd_temp_max - self.cwd_temp_min) * (1 + _math.cos(_math.pi * progress))
-                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau:.2f}")
                 else:
-                    tau = self.cwd_temp_value
-                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau:.2f}")
+                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={self.cwd_temp_value:.2f}")
             # ============================= CWD epoch logging ==========================
 
             self.run_callbacks("on_train_epoch_end")
@@ -1122,18 +1098,14 @@ class BaseTrainer:
             "dms_importance": getattr(self, 'dms_importance', 'gamma'),
             "dms_warmup": getattr(self, 'dms_warmup', 0),
             "finetune": getattr(self, 'finetune', False),
-            "cwd": getattr(self, 'cwd_enabled', False),
-            "cwd_teacher": getattr(self, 'cwd_teacher', None),
-            "cwd_lambda": getattr(self, '_cwd_lambda', 0.5),
-            "cwd_temperature": getattr(self, 'cwd_temperature', 6.0),
-            "tau_max": getattr(self, 'tau_max', 10.0),
-            "tau_min": getattr(self, 'tau_min', 1.0),
-            "cwd_layers": getattr(self, 'cwd_layers', 'neck'),
-            "cwd_layer_weights": getattr(self, '_cwd_layer_weights', None),
-            "cwd_warmup": getattr(self, 'cwd_warmup', 5),
-            "cwd_learnable_tau": getattr(self, '_cwd_learnable_tau', False),
+            "kd": getattr(self, 'kd_enabled', False),
+            "kd_teacher": getattr(self, 'kd_teacher', None),
+            "kd_lambda": getattr(self, '_kd_lambda', 0.5),
+            "cwd_temperature": getattr(self, 'cwd_temperature', 9.0),
+            "kd_layers": getattr(self, 'kd_layers', 'neck'),
+            "kd_warmup": getattr(self, 'kd_warmup', 5),
             "cwd_learnable_tau_lr": getattr(self, 'cwd_learnable_tau_lr', 1e-3),
-            "cwd_learnable_tau_init": getattr(self, 'cwd_learnable_tau_init', 6.0),
+            "cwd_learnable_tau_init": getattr(self, 'cwd_learnable_tau_init', 9.0),
             "kd_method": getattr(self, '_kd_method', 'cwd'),
             "mgd_mask_ratio": getattr(self, 'mgd_mask_ratio', 0.5),
             "fitnets_normalize": getattr(self, 'fitnets_normalize', True),
@@ -1142,7 +1114,7 @@ class BaseTrainer:
 
         # ============================= Finetune: save maskbndict for resume ==========================
         if getattr(self, 'finetune', False):
-            maskbndict = getattr(self, 'maskbndict', None) or getattr(self, 'cwd_maskbndict', None)
+            maskbndict = getattr(self, 'maskbndict', None) or getattr(self, 'kd_maskbndict', None)
             if maskbndict is not None:
                 ckpt_dict["maskbndict"] = maskbndict
         # ============================= Finetune: save maskbndict for resume ==========================
@@ -1165,27 +1137,26 @@ class BaseTrainer:
         # =======================================================================================
 
         # ============================= CWD: save state for resume ==========================
-        if getattr(self, 'cwd_enabled', False):
-            ckpt_dict["cwd_state"] = {
-                "teacher": getattr(self, 'cwd_teacher', None),
-                "lambda": self._cwd_lambda,
+        if getattr(self, 'kd_enabled', False):
+            ckpt_dict["kd_state"] = {
+                "teacher": getattr(self, 'kd_teacher', None),
+                "lambda": self._kd_lambda,
                 "temperature": getattr(self, 'cwd_temperature', 6.0),
-                "layers": getattr(self, 'cwd_layers', 'neck'),
-                "layer_weights": getattr(self, 'cwd_layer_weights', None),
+                "layers": getattr(self, 'kd_layers', 'neck'),
             }
             # Save learnable tau state
-            if getattr(self, '_cwd_learnable_tau', False) and hasattr(self, 'cwd_log_tau'):
+            if self.cwd_temp_mode == "learnable" and hasattr(self, 'cwd_log_tau'):
                 ckpt_dict["cwd_learnable_tau_state"] = {
                     "log_tau": self.cwd_log_tau.detach().cpu(),
                     "optimizer": self.cwd_tau_optimizer.state_dict(),
                 }
-            maskbndict = getattr(self, 'cwd_maskbndict', None)
+            maskbndict = getattr(self, 'kd_maskbndict', None)
             if maskbndict is not None:
                 ckpt_dict["maskbndict"] = maskbndict
         # ============================= CWD: save state for resume ==========================
 
         # ============================= CWD: clean hooks from EMA copy ==========================
-        if getattr(self, 'cwd_enabled', False):
+        if getattr(self, 'kd_enabled', False):
             ema_model = ckpt_dict.get("ema")
             if ema_model is not None:
                 for m in ema_model.modules():
@@ -1326,7 +1297,7 @@ class BaseTrainer:
             self._mgd_optimizer.zero_grad()
 
         # CWD learnable tau optimizer step
-        if getattr(self, '_cwd_learnable_tau', False) and hasattr(self, 'cwd_tau_optimizer'):
+        if self.cwd_temp_mode == "learnable" and hasattr(self, 'cwd_tau_optimizer'):
             # Unscale gradient manually (scaler chỉ biết main optimizer)
             scale = self.scaler.get_scale()
             if self.cwd_log_tau.grad is not None:
@@ -1580,7 +1551,7 @@ class BaseTrainer:
         # ============================= DMS: restore a_params + optimizer ==========================
 
         # ============================= CWD: restore learnable tau ==========================
-        if getattr(self, '_cwd_learnable_tau', False) and hasattr(self, 'cwd_log_tau'):
+        if self.cwd_temp_mode == "learnable" and hasattr(self, 'cwd_log_tau'):
             saved_tau_state = ckpt.get('cwd_learnable_tau_state', {})
             if saved_tau_state:
                 saved_log_tau = saved_tau_state.get('log_tau')

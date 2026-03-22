@@ -8,7 +8,7 @@ Knowledge Distillation Losses for YOLO Detection
 
 Tất cả dùng chung infrastructure với CWD:
 - Feature hooks (cwd_loss.py: setup_hooks, FeatureHook)
-- Channel alignment (cwd_loss.py: build_cwd_channel_masks)
+- Channel alignment (cwd_loss.py: build_kd_channel_masks)
 - Warmup + ramp up (trainer.py)
 
 Chỉ khác loss function.
@@ -209,10 +209,10 @@ class MGDLoss(nn.Module):
 # ============================================================================
 
 def compute_response_kd_loss(student_hooks, teacher_hooks, criterion,
-                             channel_masks, layer_weights, temperature):
-    """Compute weighted Response KD loss across all hooked layers."""
+                             channel_masks, temperature):
+    """Compute Response KD loss across all hooked layers."""
     loss = 0.0
-    total_weight = 0.0
+    count = 0
 
     for name in student_hooks:
         s_feat = student_hooks[name].features
@@ -229,20 +229,19 @@ def compute_response_kd_loss(student_hooks, teacher_hooks, criterion,
             t_feat = F.interpolate(t_feat, size=s_feat.shape[2:],
                                    mode='bilinear', align_corners=False)
 
-        w = layer_weights.get(name, 1.0)
-        loss = loss + w * criterion(s_feat, t_feat, temperature)
-        total_weight += w
+        loss = loss + criterion(s_feat, t_feat, temperature)
+        count += 1
 
-    if total_weight == 0.0:
+    if count == 0:
         return torch.tensor(0.0, requires_grad=True)
-    return loss / total_weight
+    return loss / count
 
 
 def compute_fitnets_loss(student_hooks, teacher_hooks, criterion,
-                         channel_masks, layer_weights):
-    """Compute weighted FitNets loss across all hooked layers."""
+                         channel_masks):
+    """Compute FitNets loss across all hooked layers."""
     loss = 0.0
-    total_weight = 0.0
+    count = 0
 
     for name in student_hooks:
         s_feat = student_hooks[name].features
@@ -259,25 +258,24 @@ def compute_fitnets_loss(student_hooks, teacher_hooks, criterion,
             t_feat = F.interpolate(t_feat, size=s_feat.shape[2:],
                                    mode='bilinear', align_corners=False)
 
-        w = layer_weights.get(name, 1.0)
-        loss = loss + w * criterion(s_feat, t_feat)
-        total_weight += w
+        loss = loss + criterion(s_feat, t_feat)
+        count += 1
 
-    if total_weight == 0.0:
+    if count == 0:
         return torch.tensor(0.0, requires_grad=True)
-    return loss / total_weight
+    return loss / count
 
 
 def compute_mgd_loss(student_hooks, teacher_hooks, criterion,
-                     channel_masks, layer_weights):
+                     channel_masks):
     """
-    Compute weighted MGD loss across all hooked layers.
+    Compute MGD loss across all hooked layers.
 
     Khác CWD/FitNets: KHÔNG align teacher channels trước.
     Generator xử lý dimension mismatch (student_ch → teacher_ch).
     """
     loss = 0.0
-    total_weight = 0.0
+    count = 0
 
     for name in student_hooks:
         s_feat = student_hooks[name].features
@@ -290,11 +288,10 @@ def compute_mgd_loss(student_hooks, teacher_hooks, criterion,
             t_feat = F.interpolate(t_feat, size=s_feat.shape[2:],
                                    mode='bilinear', align_corners=False)
 
-        w = layer_weights.get(name, 1.0)
         # MGD forward nhận teacher FULL channels (generator project)
-        loss = loss + w * criterion(s_feat, t_feat, name)
-        total_weight += w
+        loss = loss + criterion(s_feat, t_feat, name)
+        count += 1
 
-    if total_weight == 0.0:
+    if count == 0:
         return torch.tensor(0.0, requires_grad=True)
-    return loss / total_weight
+    return loss / count

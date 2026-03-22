@@ -86,7 +86,7 @@ def setup_hooks(model: nn.Module, layer_names: List[str]) -> Dict[str, FeatureHo
     return hooks
 
 
-def build_cwd_channel_masks(maskbndict: Dict[str, torch.Tensor], layer_indices: List[int]) -> Dict[str, torch.Tensor]:
+def build_kd_channel_masks(maskbndict: Dict[str, torch.Tensor], layer_indices: List[int]) -> Dict[str, torch.Tensor]:
     """
     Build boolean masks for channel alignment between teacher and pruned student.
 
@@ -114,25 +114,23 @@ def compute_cwd_loss(
     teacher_hooks: Dict[str, FeatureHook],
     criterion: CWDLoss,
     channel_masks: Dict[str, torch.Tensor],
-    layer_weights: Dict[str, float],
     temperature: float,
 ) -> torch.Tensor:
     """
-    Compute weighted CWD loss across all hooked layers.
+    Compute CWD loss across all hooked layers.
 
     Args:
         student_hooks: Dict of student feature hooks
         teacher_hooks: Dict of teacher feature hooks
         criterion: CWDLoss instance
-        channel_masks: Dict from build_cwd_channel_masks (for channel alignment)
-        layer_weights: Dict mapping layer name → weight (default 1.0 if not present)
+        channel_masks: Dict from build_kd_channel_masks (for channel alignment)
         temperature: Current temperature τ
 
     Returns:
-        Weighted average CWD loss (scalar tensor)
+        Average CWD loss (scalar tensor)
     """
     loss = 0.0
-    total_weight = 0.0
+    count = 0
 
     for name in student_hooks:
         s_feat = student_hooks[name].features
@@ -150,11 +148,10 @@ def compute_cwd_loss(
         if s_feat.shape[2:] != t_feat.shape[2:]:
             t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False)
 
-        w = layer_weights.get(name, 1.0)
-        loss = loss + w * criterion(s_feat, t_feat, temperature)
-        total_weight += w
+        loss = loss + criterion(s_feat, t_feat, temperature)
+        count += 1
 
-    if total_weight == 0.0:
+    if count == 0:
         return torch.tensor(0.0, requires_grad=True)
 
-    return loss / total_weight
+    return loss / count

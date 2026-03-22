@@ -781,18 +781,14 @@ class Model(torch.nn.Module):
         dms_importance = args.pop("dms_importance", "gamma")
         dms_warmup = args.pop("dms_warmup", 0)
         finetune = args.pop("finetune", False)
-        cwd = args.pop("cwd", False)
-        cwd_teacher = args.pop("cwd_teacher", None)
-        cwd_lambda = args.pop("cwd_lambda", 0.5)
-        cwd_temperature = args.pop("cwd_temperature", 6.0)
-        tau_max = args.pop("tau_max", 10.0)
-        tau_min = args.pop("tau_min", 1.0)
-        cwd_layers = args.pop("cwd_layers", "neck")
-        cwd_layer_weights = args.pop("cwd_layer_weights", None)
-        cwd_warmup = args.pop("cwd_warmup", 5)
-        cwd_learnable_tau = args.pop("cwd_learnable_tau", False)
+        kd = args.pop("kd", False)
+        kd_teacher = args.pop("kd_teacher", None)
+        kd_lambda = args.pop("kd_lambda", 0.5)
+        cwd_temperature = args.pop("cwd_temperature", 9.0)  # float=fixed, "learnable"=auto
+        kd_layers = args.pop("kd_layers", "neck")
+        kd_warmup = args.pop("kd_warmup", 5)
         cwd_learnable_tau_lr = args.pop("cwd_learnable_tau_lr", 1e-3)
-        cwd_learnable_tau_init = args.pop("cwd_learnable_tau_init", 6.0)
+        cwd_learnable_tau_init = args.pop("cwd_learnable_tau_init", 9.0)
         kd_method = args.pop("kd_method", "cwd")
         mgd_mask_ratio = args.pop("mgd_mask_ratio", 0.5)
         fitnets_normalize = args.pop("fitnets_normalize", True)
@@ -826,26 +822,18 @@ class Model(torch.nn.Module):
                         dms_warmup = _saved.get("dms_warmup", dms_warmup)
                     if "finetune" not in kwargs and _saved.get("finetune"):
                         finetune = _saved["finetune"]
-                    if "cwd" not in kwargs and _saved.get("cwd"):
-                        cwd = _saved["cwd"]
-                    if "cwd_teacher" not in kwargs and _saved.get("cwd_teacher"):
-                        cwd_teacher = _saved["cwd_teacher"]
-                    if "cwd_lambda" not in kwargs:
-                        cwd_lambda = _saved.get("cwd_lambda", cwd_lambda)
+                    if "kd" not in kwargs and _saved.get("kd"):
+                        kd = _saved["kd"]
+                    if "kd_teacher" not in kwargs and _saved.get("kd_teacher"):
+                        kd_teacher = _saved["kd_teacher"]
+                    if "kd_lambda" not in kwargs:
+                        kd_lambda = _saved.get("kd_lambda", kd_lambda)
                     if "cwd_temperature" not in kwargs:
                         cwd_temperature = _saved.get("cwd_temperature", cwd_temperature)
-                    if "tau_max" not in kwargs:
-                        tau_max = _saved.get("tau_max", tau_max)
-                    if "tau_min" not in kwargs:
-                        tau_min = _saved.get("tau_min", tau_min)
-                    if "cwd_layers" not in kwargs:
-                        cwd_layers = _saved.get("cwd_layers", cwd_layers)
-                    if "cwd_layer_weights" not in kwargs:
-                        cwd_layer_weights = _saved.get("cwd_layer_weights", cwd_layer_weights)
-                    if "cwd_warmup" not in kwargs:
-                        cwd_warmup = _saved.get("cwd_warmup", cwd_warmup)
-                    if "cwd_learnable_tau" not in kwargs:
-                        cwd_learnable_tau = _saved.get("cwd_learnable_tau", cwd_learnable_tau)
+                    if "kd_layers" not in kwargs:
+                        kd_layers = _saved.get("kd_layers", kd_layers)
+                    if "kd_warmup" not in kwargs:
+                        kd_warmup = _saved.get("kd_warmup", kd_warmup)
                     if "cwd_learnable_tau_lr" not in kwargs:
                         cwd_learnable_tau_lr = _saved.get("cwd_learnable_tau_lr", cwd_learnable_tau_lr)
                     if "cwd_learnable_tau_init" not in kwargs:
@@ -870,17 +858,13 @@ class Model(torch.nn.Module):
         self.trainer.dms_freeze = dms_freeze
         self.trainer.dms_importance = dms_importance
         self.trainer.dms_warmup = dms_warmup
-        self.trainer.cwd = cwd
-        self.trainer.cwd_teacher = cwd_teacher
-        self.trainer.cwd_lambda = cwd_lambda
+        self.trainer.kd = kd
+        self.trainer.kd_teacher = kd_teacher
+        self.trainer.kd_lambda = kd_lambda
         self.trainer.cwd_temperature = cwd_temperature
-        self.trainer.tau_max = tau_max
-        self.trainer.tau_min = tau_min
-        self.trainer.cwd_layers = cwd_layers
-        self.trainer.cwd_layer_weights = cwd_layer_weights
-        self.trainer.cwd_maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
-        self.trainer.cwd_warmup = cwd_warmup
-        self.trainer.cwd_learnable_tau = cwd_learnable_tau
+        self.trainer.kd_layers = kd_layers
+        self.trainer.kd_maskbndict = self.ckpt.get("maskbndict", None) if self.ckpt else None
+        self.trainer.kd_warmup = kd_warmup
         self.trainer.cwd_learnable_tau_lr = cwd_learnable_tau_lr
         self.trainer.cwd_learnable_tau_init = cwd_learnable_tau_init
         self.trainer.kd_method = kd_method
