@@ -789,6 +789,7 @@ class Model(torch.nn.Module):
         kd_warmup = args.pop("kd_warmup", 5)
         cwd_learnable_tau_lr = args.pop("cwd_learnable_tau_lr", 1e-3)
         cwd_learnable_tau_init = args.pop("cwd_learnable_tau_init", 9.0)
+        cwd_tau_reg = args.pop("cwd_tau_reg", 0.1)
         kd_method = args.pop("kd_method", "cwd")
         mgd_mask_ratio = args.pop("mgd_mask_ratio", 0.5)
         fitnets_normalize = args.pop("fitnets_normalize", True)
@@ -867,6 +868,7 @@ class Model(torch.nn.Module):
         self.trainer.kd_warmup = kd_warmup
         self.trainer.cwd_learnable_tau_lr = cwd_learnable_tau_lr
         self.trainer.cwd_learnable_tau_init = cwd_learnable_tau_init
+        self.trainer.cwd_tau_reg = cwd_tau_reg
         self.trainer.kd_method = kd_method
         self.trainer.mgd_mask_ratio = mgd_mask_ratio
         self.trainer.fitnets_normalize = fitnets_normalize

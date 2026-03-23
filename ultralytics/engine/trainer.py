@@ -804,6 +804,13 @@ class BaseTrainer:
                             # Ramp up lambda linearly over first 5 epochs after warmup
                             kd_ramp = min((epoch - kd_warmup) / 5.0, 1.0)
                             self.loss = self.loss + kd_ramp * self._kd_lambda * kd_loss_val
+
+                            # Tau regularization: phạt tau xa khỏi init (chống drift lên max clamp)
+                            if self.cwd_temp_mode == "learnable":
+                                import math as _math
+                                tau_reg = getattr(self, 'cwd_tau_reg', 0.1)
+                                log_tau_init = _math.log(getattr(self, 'cwd_learnable_tau_init', 9.0))
+                                self.loss = self.loss + tau_reg * (self.cwd_log_tau - log_tau_init) ** 2
                         elif epoch == kd_warmup - 1 and ni == 0:
                             LOGGER.info(f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {kd_warmup}")
                     # ============================= KD loss ==========================
