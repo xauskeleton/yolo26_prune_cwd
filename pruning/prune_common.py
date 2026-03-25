@@ -149,12 +149,14 @@ def create_masks(importance_scores, model, ignore_bn_list, layer_ratio_cfg,
                 mask = scores.gt(local_thre).float()
                 current_channels = mask.sum().int().item()
 
-                # Edge case: tất cả channels bị prune
-                if current_channels == 0:
+                # Enforce min 16 channels
+                min_channels = 16
+                if current_channels < min_channels:
                     sorted_idx = torch.argsort(scores, descending=True)
                     mask = torch.zeros_like(scores)
-                    mask[sorted_idx[:divisor]] = 1.0
-                    current_channels = divisor
+                    keep = min(min_channels, origin_channels)
+                    mask[sorted_idx[:keep]] = 1.0
+                    current_channels = keep
 
                 # Làm tròn đến bội số của divisor
                 target_channels = make_divisible_channels(current_channels, origin_channels, divisor)

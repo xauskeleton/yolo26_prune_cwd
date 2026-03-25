@@ -28,7 +28,7 @@ from ultralytics.nn.modules.block import Bottleneck, PSABlock
 # PRUNING UTILITIES (shared by prune.py)
 # ============================================================================
 
-def make_divisible_channels(channels: int, max_channels: int, divisor: int) -> int:
+def make_divisible_channels(channels: int, max_channels: int, divisor: int, min_channels: int = 16) -> int:
     """
     Làm tròn channels đến bội số gần nhất của divisor.
     Dùng make_divisible từ Ultralytics.
@@ -37,11 +37,13 @@ def make_divisible_channels(channels: int, max_channels: int, divisor: int) -> i
         channels:     Số channels cần làm tròn
         max_channels: Giới hạn trên (không vượt quá origin)
         divisor:      Số chia (8 hoặc 16)
+        min_channels: Giới hạn dưới (mặc định 16, tránh bottleneck quá hẹp)
 
     Returns:
-        int: Số channels đã làm tròn, đảm bảo <= max_channels
+        int: Số channels đã làm tròn, đảm bảo min_channels <= result <= max_channels
     """
-    return min(make_divisible(channels, divisor), max_channels)
+    result = make_divisible(max(channels, min_channels), divisor)
+    return min(result, max_channels)
 
 
 def get_layer_ratio(layer_name: str, layer_ratio_cfg: dict, default_ratio: float) -> float:
@@ -720,7 +722,8 @@ def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml', divis
     ratios = {}
     for name, a in a_params.items():
         n_channels = bn_channels.get(name, 256)
-        a_max = 1.0 - divisor / n_channels
+        min_channels = max(divisor, 16)
+        a_max = 1.0 - min_channels / n_channels
         val = float(a.clamp(0.0, a_max).item())
         ratios[name] = round(val, 4)
 
