@@ -325,10 +325,9 @@ class DMSMaskManager:
         vm = scores.unsqueeze(-1) - scores.unsqueeze(-2)  # [N,N]
         c_ste = (vm >= 0).float() - vm.detach() + vm       # STE trick
         c_ranked = c_ste.mean(dim=-1)                       # [0,1] high=important
-        c_prime = 1 - c_ranked                              # flip: important→low
 
-        # Step 3: soft mask (paper: sigmoid(-(c' - a) * N))
-        mask = torch.sigmoid(-(c_prime - a) * N)
+        # Step 3: soft mask — a = pruning ratio, keep channels with rank > a
+        mask = torch.sigmoid((c_ranked - a) * N)
 
         # Step 4: taylor backward hook with AMP unscale
         if bn.training and mask.requires_grad:
@@ -441,10 +440,10 @@ def profile_per_layer_flops(model, imgsz=640, device='cuda'):
     def _make_hook(name):
         def _hook(module, inp, output):
             h, w = output.shape[2:]
-            flops = (module.in_channels * module.out_channels
-                     * module.kernel_size[0] * module.kernel_size[1]
-                     * h * w / module.groups)
-            flops_dict[name] = flops
+            macs = (module.in_channels * module.out_channels
+                    * module.kernel_size[0] * module.kernel_size[1]
+                    * h * w / module.groups)
+            flops_dict[name] = macs * 2  # 1 MAC = 2 FLOPs
         return _hook
 
     for name, m in model.named_modules():

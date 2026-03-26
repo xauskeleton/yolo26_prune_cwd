@@ -363,9 +363,7 @@ class BaseTrainer:
                     prunable_bns[name] = m
 
             # Create learnable a params + taylor buffers
-            import math
-            T = getattr(self, 'dms_target', 0.3)
-            a_init = (1 - math.sqrt(1 - T)) / 2
+            a_init = 0.0  # start unpruned, progressive scheduler increases gradually
             for name, m in prunable_bns.items():
                 a = nn.Parameter(torch.tensor(a_init, device=self.device))
                 self.a_params[name] = a
@@ -915,17 +913,6 @@ class BaseTrainer:
                 min_a = min(a.item() for a in self.a_params.values())
                 max_a = max(a.item() for a in self.a_params.values())
 
-                # Compute a param change from last epoch
-                prev_a = getattr(self, '_dms_prev_a', None)
-                curr_a = {name: a.item() for name, a in self.a_params.items()}
-                if prev_a is not None:
-                    deltas = [abs(curr_a[n] - prev_a[n]) for n in curr_a]
-                    delta_avg = sum(deltas) / len(deltas)
-                    delta_max = max(deltas)
-                else:
-                    delta_avg = delta_max = float('nan')
-                self._dms_prev_a = curr_a
-
                 ct = getattr(self, '_dms_current_target', self.dms_target)
                 phase = getattr(self, '_dms_phase', 'progressive')
                 rl = getattr(self, '_dms_last_resource', None)
@@ -934,24 +921,21 @@ class BaseTrainer:
                         f"[DMS] Epoch {epoch} [{phase}]: avg_a={avg_a:.4f}, "
                         f"min={min_a:.4f}, max={max_a:.4f} | "
                         f"GFLOPs: {rl.gflops_effective:.2f}/{rl.gflops_total:.2f} "
-                        f"({rl.retention*100:.1f}% retain, target={rl.target_retention*100:.1f}%) "
+                        f"({(1-rl.retention)*100:.1f}% pruned, target={(1-rl.target_retention)*100:.1f}%) "
                         f"res_loss={rl.item():.4f} | "
-                        f"target={ct:.3f}/{self.dms_target:.3f} | "
-                        f"Δa: avg={delta_avg:.5f}, max={delta_max:.5f}"
+                        f"target={ct:.3f}/{self.dms_target:.3f}"
                     )
                 elif phase == "refine":
                     LOGGER.info(
                         f"[DMS] Epoch {epoch} [refine]: avg_a={avg_a:.4f}, "
                         f"min={min_a:.4f}, max={max_a:.4f} | "
-                        f"NO resource loss (detection-only refine) | "
-                        f"Δa: avg={delta_avg:.5f}, max={delta_max:.5f}"
+                        f"NO resource loss (detection-only refine)"
                     )
                 else:
                     LOGGER.info(
                         f"[DMS] Epoch {epoch} [{phase}]: avg_a={avg_a:.4f}, "
                         f"min={min_a:.4f}, max={max_a:.4f} | "
-                        f"target={ct:.3f}/{self.dms_target:.3f} | "
-                        f"Δa: avg={delta_avg:.5f}, max={delta_max:.5f}"
+                        f"target={ct:.3f}/{self.dms_target:.3f}"
                     )
             # ============================= DMS epoch logging ==========================
 
@@ -1273,11 +1257,25 @@ class BaseTrainer:
             self.optimizer.zero_grad()
             # DMS optimizer: unscale thu cong
             dms_skip = False
+            none_count = 0
+            grad_vals = []
             for a in self.a_params.values():
                 if a.grad is not None:
                     a.grad.div_(dms_scale)
+                    grad_vals.append(a.grad.item())
                     if not torch.isfinite(a.grad).all():
                         dms_skip = True
+                else:
+                    none_count += 1
+            if grad_vals:
+                LOGGER.info(
+                    f"[DMS-GRAD] {len(grad_vals)} grads, {none_count} None | "
+                    f"mean={sum(grad_vals)/len(grad_vals):.6e}, "
+                    f"min={min(grad_vals):.6e}, max={max(grad_vals):.6e} | "
+                    f"skip={dms_skip}, scale={dms_scale:.1f}"
+                )
+            else:
+                LOGGER.warning(f"[DMS-GRAD] ALL {none_count} a_params have grad=None!")
             if not dms_skip:
                 self.dms_optimizer.step()
             self.dms_optimizer.zero_grad()
@@ -1288,8 +1286,8 @@ class BaseTrainer:
                 min_ch = 16
                 for name, a in self.a_params.items():
                     n_channels = self.bn_channels.get(name, 256)
-                    a_min = min_ch / n_channels
-                    a_max = 1.0 - divisor / n_channels
+                    a_min = divisor / n_channels       # prune at least divisor channels (alignment)
+                    a_max = 1.0 - min_ch / n_channels  # keep at least min_ch channels
                     a.clamp_(a_min, a_max)
         else:
             self.scaler.unscale_(self.optimizer)  # unscale gradients
