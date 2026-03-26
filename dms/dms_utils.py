@@ -215,57 +215,36 @@ def build_ignore_bn_list(model):
 
 def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=None, conv_module=None):
     """
-    Create forward hook that applies differentiable soft mask after BN.
+    DEPRECATED: Use DMSMaskManager for taylor importance instead.
 
-    Algorithm per forward:
-        1. importance = |BN.gamma| or taylor buffer or L1 norm of conv weights
-        2. c' = rank(importance) / N  (detached, no grad)
-        3. mask = Sigmoid(N * (c' - a))  (grad flows through a)
-        4. output *= mask
-        (if taylor: register backward hook to update taylor buffer with EMA)
-
-    Args:
-        bn_name: Name of the BN layer
-        a_params: Dict {bn_name: nn.Parameter(a)} shared across all hooks
-        importance: 'gamma' (|BN.weight|), 'taylor' ((mask * grad)^2 with EMA),
-                    or 'l1' (L1 norm of corresponding Conv filter weights)
-        taylor_buffers: Dict {bn_name: Tensor} required when importance='taylor'
-        conv_module: nn.Conv2d module, required when importance='l1'
-
-    Returns:
-        Hook function for register_forward_hook
+    Legacy BN output hook for gamma/l1 importance. Kept for backward compat.
+    For taylor importance, DMSMaskManager applies mask at Conv input with
+    STE ranking + AMP unscale (matching ICML 2024 paper).
     """
     def hook(module, input, output):
         N = module.weight.shape[0]
 
-        # Step 1: Get importance scores
         with torch.no_grad():
             if importance == 'l1' and conv_module is not None:
-                # L1 norm per output filter: sum(|weight[i, :, :, :]|)
                 scores = conv_module.weight.data.abs().sum(dim=[1, 2, 3])
             elif importance == 'taylor' and taylor_buffers is not None and bn_name in taylor_buffers:
                 scores = taylor_buffers[bn_name]
-                # Fallback to gamma if taylor is all zeros (first few iters)
                 if scores.max() == scores.min():
                     scores = module.weight.data.abs()
             else:
                 scores = module.weight.data.abs()
 
-            # Step 2: Rank normalize → uniform [0, 1]
             sorted_idx = scores.argsort()
             rank = torch.zeros_like(scores)
             rank[sorted_idx] = torch.arange(N, device=scores.device, dtype=scores.dtype)
             c_prime = rank / N
 
-        # Step 3: Soft mask (grad flows through a only)
         a = a_params[bn_name]
-        mask = torch.sigmoid(N * (c_prime - a))  # shape [C]
+        mask = torch.sigmoid(N * (c_prime - a))
 
-        # Step 4: Taylor importance update via backward hook on mask [C]
         if importance == 'taylor' and taylor_buffers is not None and module.training and mask.requires_grad:
-            mask_vals = mask.detach()  # save current mask values
+            mask_vals = mask.detach()
             def _taylor_backward_hook(grad):
-                # grad shape [C] = d(loss)/d(mask), channel-level
                 with torch.no_grad():
                     taylor_new = (mask_vals * grad) ** 2
                     if not taylor_new.isnan().any() and taylor_new.max() != taylor_new.min():
@@ -274,10 +253,174 @@ def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=No
                         )
             mask.register_hook(_taylor_backward_hook)
 
-        # Step 5: Apply mask (cast to output dtype to avoid float32/float16 mismatch with AMP)
         return output * mask.to(dtype=output.dtype).view(1, -1, 1, 1)
 
     return hook
+
+
+class DMSMaskManager:
+    """
+    DMS soft mask manager matching ICML 2024 paper implementation.
+
+    Key improvements over legacy make_soft_mask_hook:
+    1. Mask applied at Conv INPUT (pre-hook) instead of BN output
+       → gradient does not pass through activation, more direct importance signal
+    2. STE differentiable ranking: (vm >= 0).float() - vm.detach() + vm
+       → smoother gradient landscape for a param optimization
+    3. AMP grad unscale: grad / scaler before taylor update
+       → correct importance across varying AMP scales
+    4. Supports taylor/snip/fisher importance types
+    5. isinf() check in addition to isnan()
+    """
+
+    def __init__(self, a_params, taylor_buffers, bn_modules, bn_channels,
+                 grad_scaler_fn=None, taylor_type='taylor', decay=0.99):
+        """
+        Args:
+            a_params:       Dict {bn_name: nn.Parameter(a)}
+            taylor_buffers: Dict {bn_name: Tensor}
+            bn_modules:     Dict {bn_name: nn.BatchNorm2d}
+            bn_channels:    Dict {bn_name: int}
+            grad_scaler_fn: Callable → float (AMP scale), 0 = no AMP
+            taylor_type:    'taylor' | 'snip' | 'fisher'
+            decay:          EMA decay (default 0.99)
+        """
+        self.a_params = a_params
+        self.taylor_buffers = taylor_buffers
+        self.bn_modules = bn_modules
+        self.bn_channels = bn_channels
+        self.grad_scaler_fn = grad_scaler_fn
+        self.taylor_type = taylor_type
+        self.decay = decay
+        self._mask_cache = {}
+
+    def reset_cache(self):
+        """Clear mask cache. Call once per forward pass."""
+        self._mask_cache.clear()
+
+    def compute_mask(self, bn_name):
+        """
+        Compute soft mask with STE ranking + taylor backward hook.
+
+        Paper algorithm:
+        1. scores = taylor buffer (fallback |gamma| if all-zero)
+        2. STE ranking: pairwise comparison with straight-through gradient
+        3. mask = sigmoid(-(c_prime - a) * N)
+        4. Backward hook: update taylor buffer with AMP-unscaled gradient
+        """
+        if bn_name in self._mask_cache:
+            return self._mask_cache[bn_name]
+
+        bn = self.bn_modules[bn_name]
+        N = bn.weight.shape[0]
+        a = self.a_params[bn_name]
+
+        # Step 1: importance scores
+        with torch.no_grad():
+            scores = self.taylor_buffers.get(bn_name)
+            if scores is None or scores.max() == scores.min():
+                scores = bn.weight.data.abs()
+
+        # Step 2: STE differentiable ranking (paper Eq.)
+        vm = scores.unsqueeze(-1) - scores.unsqueeze(-2)  # [N,N]
+        c_ste = (vm >= 0).float() - vm.detach() + vm       # STE trick
+        c_ranked = c_ste.mean(dim=-1)                       # [0,1] high=important
+        c_prime = 1 - c_ranked                              # flip: important→low
+
+        # Step 3: soft mask (paper: sigmoid(-(c' - a) * N))
+        mask = torch.sigmoid(-(c_prime - a) * N)
+
+        # Step 4: taylor backward hook with AMP unscale
+        if bn.training and mask.requires_grad:
+            mask_vals = mask.detach()
+            grad_scale = self.grad_scaler_fn() if self.grad_scaler_fn else 0
+            taylor_type = self.taylor_type
+            decay = self.decay
+            tb = self.taylor_buffers
+
+            def _taylor_hook(grad, _bn=bn_name, _mv=mask_vals, _gs=grad_scale,
+                             _tt=taylor_type, _d=decay, _tb=tb):
+                with torch.no_grad():
+                    g = grad.float()
+                    if _gs != 0:
+                        g = g / _gs                         # AMP unscale
+                    if _tt == 'snip':
+                        new_t = (_mv * g).abs()
+                    elif _tt == 'fisher':
+                        new_t = g ** 2
+                    else:  # 'taylor'
+                        new_t = (_mv * g) ** 2
+                    if not new_t.isnan().any() and not new_t.isinf().any():
+                        if new_t.max() != new_t.min():
+                            _tb[_bn] = _tb[_bn] * _d + (1 - _d) * new_t
+
+            mask.register_hook(_taylor_hook)
+
+        self._mask_cache[bn_name] = mask
+        return mask
+
+    def make_conv_prehook(self, in_bn):
+        """
+        Create Conv forward pre-hook that applies mask to input channels.
+
+        Args:
+            in_bn: str (single BN), list[str] (concat), or None
+
+        Returns:
+            Pre-hook function or None
+        """
+        if in_bn is None:
+            return None
+
+        manager = self
+
+        if isinstance(in_bn, list):
+            if not any(bn in self.a_params for bn in in_bn):
+                return None
+            bn_list = list(in_bn)
+
+            def hook(module, input):
+                x = input[0]
+                masks = []
+                for bn_name in bn_list:
+                    if bn_name in manager.a_params:
+                        masks.append(manager.compute_mask(bn_name))
+                    else:
+                        ch = manager.bn_channels.get(bn_name, 0)
+                        if ch > 0:
+                            masks.append(torch.ones(ch, device=x.device))
+                if masks:
+                    full_mask = torch.cat(masks).to(dtype=x.dtype).view(1, -1, 1, 1)
+                    return (x * full_mask,) + input[1:]
+            return hook
+        else:
+            if in_bn not in self.a_params:
+                return None
+            single_bn = in_bn
+
+            def hook(module, input):
+                x = input[0]
+                mask = manager.compute_mask(single_bn)
+                return (x * mask.to(dtype=x.dtype).view(1, -1, 1, 1),) + input[1:]
+            return hook
+
+    def register_all_hooks(self, conv_bn_map, modules_dict):
+        """
+        Register Conv pre-hooks for all Convs with prunable input BNs.
+
+        Returns:
+            List of hook handles
+        """
+        hooks = []
+        for conv_name, info in conv_bn_map.items():
+            in_bn = info.get('in_bn')
+            hook_fn = self.make_conv_prehook(in_bn)
+            if hook_fn is not None:
+                conv_module = modules_dict.get(conv_name)
+                if conv_module is not None:
+                    handle = conv_module.register_forward_pre_hook(hook_fn)
+                    hooks.append(handle)
+        return hooks
 
 
 def profile_per_layer_flops(model, imgsz=640, device='cuda'):
@@ -664,8 +807,17 @@ def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
     r_t = 1.0 - target_ratio
 
     if r_e > r_t:
-        return torch.log(r_e / r_t)
-    return torch.tensor(0.0, device=device, requires_grad=True)
+        loss = torch.log(r_e / r_t)
+    else:
+        loss = torch.tensor(0.0, device=device, requires_grad=True)
+
+    # Attach info for logging (detached, no grad)
+    loss.gflops_effective = (effective_flops.detach().item() / 1e9)
+    loss.gflops_total = (total_flops / 1e9)
+    loss.retention = r_e.detach().item()
+    loss.target_retention = r_t
+
+    return loss
 
 
 def compute_l1_loss(model, ignore_bn_list):

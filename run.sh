@@ -1,1 +1,1 @@
-python cwd_vip.py
+python scripts/train_dms.py

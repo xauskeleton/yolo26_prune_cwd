@@ -338,26 +338,20 @@ class BaseTrainer:
         self.dms_enabled = getattr(self, 'dms', False)
         self.a_params = {}
         self.dms_hooks = []
-        self.dms_importance = getattr(self, 'dms_importance', 'gamma')
         self.dms_divisor = getattr(self, 'dms_divisor', 8)
         self.taylor_buffers = {}
 
         if self.dms_enabled:
             from dms.dms_utils import (
                 build_ignore_bn_list, profile_per_layer_flops,
-                build_conv_bn_mapping, make_soft_mask_hook,
+                build_conv_bn_mapping, DMSMaskManager,
             )
 
             LOGGER.info(
                 f"DMS Search ENABLED: target={self.dms_target}, "
-                f"lambda={self.dms_lambda}, freeze={self.dms_freeze}, "
-                f"importance={self.dms_importance}"
+                f"lambda={self.dms_lambda}, lr={getattr(self, 'dms_lr', 2e-5)}"
             )
 
-            # Giữ AMP cho DMS (paper gốc dùng AMP)
-            # Scaler chỉ dùng cho main optimizer, DMS optimizer xử lý riêng
-
-            # Build ignore list nếu chưa có (sparsity đã build nếu sr > 0)
             if not self.ignore_bn_list:
                 self.ignore_bn_list = build_ignore_bn_list(unwrap_model(self.model))
                 LOGGER.info(f"[DMS] Built ignore_bn_list: {len(self.ignore_bn_list)} BN layers locked.")
@@ -368,18 +362,14 @@ class BaseTrainer:
                 if isinstance(m, nn.BatchNorm2d) and name not in self.ignore_bn_list:
                     prunable_bns[name] = m
 
-            # Create learnable a params
-            # a_init = (1 - sqrt(1 - T)) / 2: nửa giá trị tối ưu lý thuyết
-            # Đủ gần target để gradient hiệu quả, đủ xa để resource loss vẫn có tín hiệu
+            # Create learnable a params + taylor buffers
             import math
             T = getattr(self, 'dms_target', 0.3)
             a_init = (1 - math.sqrt(1 - T)) / 2
             for name, m in prunable_bns.items():
                 a = nn.Parameter(torch.tensor(a_init, device=self.device))
                 self.a_params[name] = a
-                # Init taylor buffer (zeros → fallback to gamma until populated)
-                if self.dms_importance == 'taylor':
-                    self.taylor_buffers[name] = torch.zeros(m.num_features, device=self.device)
+                self.taylor_buffers[name] = torch.zeros(m.num_features, device=self.device)
 
             # Profile per-layer FLOPs
             imgsz = self.args.imgsz
@@ -390,35 +380,20 @@ class BaseTrainer:
                 unwrap_model(self.model), self.ignore_bn_list
             )
 
-            # Build BN→Conv mapping for L1 norm importance
-            self.bn_to_conv = {}
-            if self.dms_importance == 'l1':
-                modules_dict = dict(unwrap_model(self.model).named_modules())
-                for bn_name in prunable_bns:
-                    conv_name = bn_name[:-2] + 'conv'  # model.X.cv1.bn → model.X.cv1.conv
-                    if conv_name in modules_dict and isinstance(modules_dict[conv_name], nn.Conv2d):
-                        self.bn_to_conv[bn_name] = modules_dict[conv_name]
-                    else:
-                        LOGGER.warning(f"[DMS] Conv not found for {bn_name}, fallback to gamma")
-                LOGGER.info(f"[DMS] L1 norm importance: mapped {len(self.bn_to_conv)}/{len(prunable_bns)} BN→Conv pairs")
-
-            # Register forward hooks on prunable BNs
-            for name, m in prunable_bns.items():
-                hook = m.register_forward_hook(make_soft_mask_hook(
-                    name, self.a_params,
-                    importance=self.dms_importance,
-                    taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
-                    conv_module=self.bn_to_conv.get(name) if self.dms_importance == 'l1' else None,
-                ))
-                self.dms_hooks.append(hook)
-
-            # NOTE: add_param_group deferred to after _build_train_pipeline() creates optimizer
-
-            # Freeze model weights if mode freeze
-            if self.dms_freeze:
-                LOGGER.info("[DMS] Freeze mode: model weights frozen, only training a params.")
-                for p in unwrap_model(self.model).parameters():
-                    p.requires_grad = False
+            # Register Conv pre-hooks (Taylor importance + STE ranking + AMP unscale)
+            self.dms_mask_manager = DMSMaskManager(
+                a_params=self.a_params,
+                taylor_buffers=self.taylor_buffers,
+                bn_modules=dict(prunable_bns),
+                bn_channels=self.bn_channels,
+                grad_scaler_fn=lambda: self.scaler.get_scale() if self.amp else 0,
+                taylor_type=getattr(self, 'dms_taylor_type', 'taylor'),
+            )
+            modules_dict = dict(unwrap_model(self.model).named_modules())
+            self.dms_hooks = self.dms_mask_manager.register_all_hooks(
+                self.conv_bn_map, modules_dict,
+            )
+            LOGGER.info(f"[DMS] Registered {len(self.dms_hooks)} Conv pre-hooks (taylor_type={getattr(self, 'dms_taylor_type', 'taylor')})")
 
             LOGGER.info(
                 f"[DMS] {len(self.a_params)} learnable a params, "
@@ -443,10 +418,7 @@ class BaseTrainer:
                 LOGGER.info(f"Freezing layer '{k}'")
                 v.requires_grad = False
             elif not v.requires_grad and v.dtype.is_floating_point:  # only floating point Tensor can require gradients
-                if getattr(self, 'dms_freeze', False):
-                    pass  # DMS freeze mode: keep model weights frozen
-                else:
-                    LOGGER.warning(
+                LOGGER.warning(
                         f"setting 'requires_grad=True' for frozen layer '{k}'. "
                         "See ultralytics.engine.trainer for customization of frozen layers."
                     )
@@ -481,7 +453,7 @@ class BaseTrainer:
         # ============================= DMS: separate optimizer for a_params ==========================
         # Use separate optimizer to avoid scheduler mismatch (scheduler tracks model optimizer only)
         if self.dms_enabled and self.a_params:
-            dms_lr = getattr(self, 'dms_lr', 5e-3)
+            dms_lr = getattr(self, 'dms_lr', 2e-5)
             self.dms_optimizer = torch.optim.Adam(
                 list(self.a_params.values()), lr=dms_lr
             )
@@ -688,18 +660,9 @@ class BaseTrainer:
                                     _loss_no_hook, _ = self.model(batch)
                                 _vals = [l.item() for l in _loss_no_hook]
                                 LOGGER.info(f"[DMS-DEBUG] Forward WITHOUT hooks: loss={_vals}")
-                                # Đăng ký lại hooks
+                                # Re-register hooks
                                 self.dms_hooks.clear()
-                                from dms.dms_utils import make_soft_mask_hook
-                                for name, m in unwrap_model(self.model).named_modules():
-                                    if isinstance(m, nn.BatchNorm2d) and name in self.a_params:
-                                        hook = m.register_forward_hook(make_soft_mask_hook(
-                                            name, self.a_params,
-                                            importance=self.dms_importance,
-                                            taylor_buffers=self.taylor_buffers if self.dms_importance == 'taylor' else None,
-                                            conv_module=self.bn_to_conv.get(name) if self.dms_importance == 'l1' else None,
-                                        ))
-                                        self.dms_hooks.append(hook)
+                                self._dms_reregister_hooks()
                                 # Test 2: forward CÓ hooks
                                 with torch.no_grad():
                                     _loss_hook, _ = self.model(batch)
@@ -732,6 +695,9 @@ class BaseTrainer:
                                     LOGGER.info(f"[DMS-DEBUG] All model weights are finite")
                             # ====== end debug ======
 
+                            # Reset mask cache before forward (paper: one mask per BN per forward)
+                            if hasattr(self, 'dms_mask_manager'):
+                                self.dms_mask_manager.reset_cache()
                             loss, self.loss_items = self.model(batch)
                         else:
                             loss, self.loss_items = self.model(batch)
@@ -741,14 +707,41 @@ class BaseTrainer:
 
                         # ============================= DMS loss ==========================
                         if self.dms_enabled:
-                            dms_warmup = getattr(self, 'dms_warmup', 0)
-                            if epoch >= dms_warmup:
-                                from dms.dms_utils import compute_resource_loss
+                            from dms.dms_utils import compute_resource_loss
+                            # 3-phase scheduler (matching ICML 2024 paper):
+                            #   Phase 1 [0, decay_ratio): progressive target, resource loss ON
+                            #   Phase 2 [decay_ratio, decay_ratio+refine_ratio): fixed target, resource loss ON
+                            #   Phase 3 [decay_ratio+refine_ratio, 1.0]: NO resource loss (refine detection)
+                            epoch_progress = (epoch + 1) / max(self.epochs, 1)
+                            decay_ratio = getattr(self, 'dms_decay_ratio', 0.6)
+                            refine_ratio = getattr(self, 'dms_refine_ratio', 0.2)
+                            final_target = self.dms_target
+
+                            if epoch_progress >= (decay_ratio + refine_ratio):
+                                # Phase 3: refine — no resource loss, only detection
+                                current_target = final_target
+                                self._dms_phase = "refine"
+                                # No resource loss added
+                                self._dms_last_resource = None
+                            else:
+                                if epoch_progress < decay_ratio:
+                                    # Phase 1: progressive target
+                                    ratio = epoch_progress / max(decay_ratio, 1e-6)
+                                    current_target = 1.0 - (1.0 - final_target) ** ratio
+                                    self._dms_phase = "progressive"
+                                else:
+                                    # Phase 2: fixed target, stabilize
+                                    current_target = final_target
+                                    self._dms_phase = "stabilize"
+
                                 loss_resource = compute_resource_loss(
                                     self.a_params, self.conv_flops, self.conv_bn_map,
-                                    self.bn_channels, self.total_flops, self.dms_target,
+                                    self.bn_channels, self.total_flops, current_target,
                                 )
                                 self.loss = self.loss + self.dms_lambda * loss_resource
+                                self._dms_last_resource = loss_resource
+
+                            self._dms_current_target = current_target
                         # ============================= DMS loss ==========================
 
                         self.tloss = (
@@ -819,14 +812,6 @@ class BaseTrainer:
                     # ============================= disable scaler ==========================
                     if getattr(self, 'sr', 0.0) > 0:
                         self.loss.backward()
-                    elif self.dms_enabled:
-                        if getattr(self, 'dms_freeze', False):
-                            # Freeze: model không có grad, không cần scaler
-                            if self.loss.isfinite():
-                                self.loss.backward()
-                        else:
-                            # Non-freeze: dùng scaler cho model grads
-                            self.scaler.scale(self.loss).backward()
                     else:
                         self.scaler.scale(self.loss).backward()
 
@@ -926,19 +911,47 @@ class BaseTrainer:
 
             # ============================= DMS epoch logging ==========================
             if getattr(self, 'dms_enabled', False) and self.a_params and RANK in {-1, 0}:
-                dms_warmup = getattr(self, 'dms_warmup', 0)
                 avg_a = sum(a.item() for a in self.a_params.values()) / len(self.a_params)
                 min_a = min(a.item() for a in self.a_params.values())
                 max_a = max(a.item() for a in self.a_params.values())
-                if epoch < dms_warmup:
+
+                # Compute a param change from last epoch
+                prev_a = getattr(self, '_dms_prev_a', None)
+                curr_a = {name: a.item() for name, a in self.a_params.items()}
+                if prev_a is not None:
+                    deltas = [abs(curr_a[n] - prev_a[n]) for n in curr_a]
+                    delta_avg = sum(deltas) / len(deltas)
+                    delta_max = max(deltas)
+                else:
+                    delta_avg = delta_max = float('nan')
+                self._dms_prev_a = curr_a
+
+                ct = getattr(self, '_dms_current_target', self.dms_target)
+                phase = getattr(self, '_dms_phase', 'progressive')
+                rl = getattr(self, '_dms_last_resource', None)
+                if rl is not None and hasattr(rl, 'gflops_effective'):
                     LOGGER.info(
-                        f"[DMS] Epoch {epoch}: WARMUP ({epoch+1}/{dms_warmup}), "
-                        f"a params frozen"
+                        f"[DMS] Epoch {epoch} [{phase}]: avg_a={avg_a:.4f}, "
+                        f"min={min_a:.4f}, max={max_a:.4f} | "
+                        f"GFLOPs: {rl.gflops_effective:.2f}/{rl.gflops_total:.2f} "
+                        f"({rl.retention*100:.1f}% retain, target={rl.target_retention*100:.1f}%) "
+                        f"res_loss={rl.item():.4f} | "
+                        f"target={ct:.3f}/{self.dms_target:.3f} | "
+                        f"Δa: avg={delta_avg:.5f}, max={delta_max:.5f}"
+                    )
+                elif phase == "refine":
+                    LOGGER.info(
+                        f"[DMS] Epoch {epoch} [refine]: avg_a={avg_a:.4f}, "
+                        f"min={min_a:.4f}, max={max_a:.4f} | "
+                        f"NO resource loss (detection-only refine) | "
+                        f"Δa: avg={delta_avg:.5f}, max={delta_max:.5f}"
                     )
                 else:
                     LOGGER.info(
-                        f"[DMS] Epoch {epoch}: avg_a={avg_a:.4f}, "
-                        f"min={min_a:.4f}, max={max_a:.4f}"
+                        f"[DMS] Epoch {epoch} [{phase}]: avg_a={avg_a:.4f}, "
+                        f"min={min_a:.4f}, max={max_a:.4f} | "
+                        f"target={ct:.3f}/{self.dms_target:.3f} | "
+                        f"Δa: avg={delta_avg:.5f}, max={delta_max:.5f}"
                     )
             # ============================= DMS epoch logging ==========================
 
@@ -1101,10 +1114,10 @@ class BaseTrainer:
             "dms": getattr(self, 'dms_enabled', False),
             "dms_target": getattr(self, 'dms_target', 0.3),
             "dms_lambda": getattr(self, 'dms_lambda', 1.0),
-            "dms_lr": getattr(self, 'dms_lr', 5e-3),
-            "dms_freeze": getattr(self, 'dms_freeze', False),
-            "dms_importance": getattr(self, 'dms_importance', 'gamma'),
-            "dms_warmup": getattr(self, 'dms_warmup', 0),
+            "dms_lr": getattr(self, 'dms_lr', 2e-5),
+            "dms_taylor_type": getattr(self, 'dms_taylor_type', 'taylor'),
+            "dms_decay_ratio": getattr(self, 'dms_decay_ratio', 0.6),
+            "dms_refine_ratio": getattr(self, 'dms_refine_ratio', 0.2),
             "finetune": getattr(self, 'finetune', False),
             "kd": getattr(self, 'kd_enabled', False),
             "kd_teacher": getattr(self, 'kd_teacher', None),
@@ -1142,6 +1155,7 @@ class BaseTrainer:
             if ema_model is not None:
                 for m in ema_model.modules():
                     m._forward_hooks.clear()
+                    m._forward_pre_hooks.clear()
         # =======================================================================================
 
         # ============================= CWD: save state for resume ==========================
@@ -1250,48 +1264,33 @@ class BaseTrainer:
             self.optimizer.zero_grad()
         # ============================= disable scaler/grad clip =============================
         elif getattr(self, 'dms_enabled', False):
-            dms_in_warmup = self.epoch < getattr(self, 'dms_warmup', 0)
-            if getattr(self, 'dms_freeze', False):
-                # ===== FREEZE MODE: không cần scaler (model đóng băng) =====
-                # Chỉ step DMS optimizer, skip nếu NaN hoặc warmup
-                if not dms_in_warmup:
-                    dms_skip = False
-                    for a in self.a_params.values():
-                        if a.grad is not None and not torch.isfinite(a.grad).all():
-                            dms_skip = True
-                            break
-                    if not dms_skip:
-                        self.dms_optimizer.step()
-                self.dms_optimizer.zero_grad()
-                self.optimizer.zero_grad()
-            else:
-                # ===== NON-FREEZE MODE: scaler cho main, thủ công cho DMS =====
-                dms_scale = self.scaler.get_scale()
-                # Main optimizer qua scaler chuẩn
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                self.optimizer.zero_grad()
-                # DMS optimizer: unscale thủ công, skip khi warmup
-                if not dms_in_warmup:
-                    dms_skip = False
-                    for a in self.a_params.values():
-                        if a.grad is not None:
-                            a.grad.div_(dms_scale)
-                            if not torch.isfinite(a.grad).all():
-                                dms_skip = True
-                    if not dms_skip:
-                        self.dms_optimizer.step()
-                self.dms_optimizer.zero_grad()
+            dms_scale = self.scaler.get_scale()
+            # Main optimizer qua scaler
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+            # DMS optimizer: unscale thu cong
+            dms_skip = False
+            for a in self.a_params.values():
+                if a.grad is not None:
+                    a.grad.div_(dms_scale)
+                    if not torch.isfinite(a.grad).all():
+                        dms_skip = True
+            if not dms_skip:
+                self.dms_optimizer.step()
+            self.dms_optimizer.zero_grad()
 
-            # Clamp a to valid range [0, 1 - divisor/N] per layer
+            # Clamp a to [min_ch/N, 1 - divisor/N] per layer
             with torch.no_grad():
                 divisor = getattr(self, 'dms_divisor', 8)
+                min_ch = 16
                 for name, a in self.a_params.items():
                     n_channels = self.bn_channels.get(name, 256)
+                    a_min = min_ch / n_channels
                     a_max = 1.0 - divisor / n_channels
-                    a.clamp_(0.0, a_max)
+                    a.clamp_(a_min, a_max)
         else:
             self.scaler.unscale_(self.optimizer)  # unscale gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
@@ -1324,6 +1323,15 @@ class BaseTrainer:
     def preprocess_batch(self, batch):
         """Allow custom preprocessing of model inputs and ground truths depending on task type."""
         return batch
+
+    def _dms_reregister_hooks(self):
+        """Re-register DMS hooks after removal (debug/validation)."""
+        self.dms_hooks.clear()
+        self.dms_mask_manager.reset_cache()
+        modules_dict = dict(unwrap_model(self.model).named_modules())
+        self.dms_hooks = self.dms_mask_manager.register_all_hooks(
+            self.conv_bn_map, modules_dict,
+        )
 
     def validate(self):
         """Run validation on val set using self.validator.

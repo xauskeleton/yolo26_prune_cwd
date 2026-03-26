@@ -1,4 +1,4 @@
-avg """Plot pruning methods benchmark - bar charts + training curves from CSV data."""
+"""Plot pruning methods benchmark - bar charts + training curves from CSV data."""
 import os
 import pandas as pd
 import matplotlib

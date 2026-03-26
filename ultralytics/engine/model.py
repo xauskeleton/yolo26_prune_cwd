@@ -776,10 +776,10 @@ class Model(torch.nn.Module):
         dms = args.pop("dms", False)
         dms_target = args.pop("dms_target", 0.3)
         dms_lambda = args.pop("dms_lambda", 1.0)
-        dms_lr = args.pop("dms_lr", 5e-3)
-        dms_freeze = args.pop("dms_freeze", False)
-        dms_importance = args.pop("dms_importance", "gamma")
-        dms_warmup = args.pop("dms_warmup", 0)
+        dms_lr = args.pop("dms_lr", 2e-5)
+        dms_taylor_type = args.pop("dms_taylor_type", "taylor")
+        dms_decay_ratio = args.pop("dms_decay_ratio", 0.8)
+        dms_refine_ratio = args.pop("dms_refine_ratio", 0.2)
         finetune = args.pop("finetune", False)
         kd = args.pop("kd", False)
         kd_teacher = args.pop("kd_teacher", None)
@@ -815,12 +815,12 @@ class Model(torch.nn.Module):
                         dms_lambda = _saved.get("dms_lambda", dms_lambda)
                     if "dms_lr" not in kwargs:
                         dms_lr = _saved.get("dms_lr", dms_lr)
-                    if "dms_freeze" not in kwargs:
-                        dms_freeze = _saved.get("dms_freeze", dms_freeze)
-                    if "dms_importance" not in kwargs:
-                        dms_importance = _saved.get("dms_importance", dms_importance)
-                    if "dms_warmup" not in kwargs:
-                        dms_warmup = _saved.get("dms_warmup", dms_warmup)
+                    if "dms_taylor_type" not in kwargs:
+                        dms_taylor_type = _saved.get("dms_taylor_type", dms_taylor_type)
+                    if "dms_decay_ratio" not in kwargs:
+                        dms_decay_ratio = _saved.get("dms_decay_ratio", dms_decay_ratio)
+                    if "dms_refine_ratio" not in kwargs:
+                        dms_refine_ratio = _saved.get("dms_refine_ratio", dms_refine_ratio)
                     if "finetune" not in kwargs and _saved.get("finetune"):
                         finetune = _saved["finetune"]
                     if "kd" not in kwargs and _saved.get("kd"):
@@ -856,9 +856,9 @@ class Model(torch.nn.Module):
         self.trainer.dms_target = dms_target
         self.trainer.dms_lambda = dms_lambda
         self.trainer.dms_lr = dms_lr
-        self.trainer.dms_freeze = dms_freeze
-        self.trainer.dms_importance = dms_importance
-        self.trainer.dms_warmup = dms_warmup
+        self.trainer.dms_taylor_type = dms_taylor_type
+        self.trainer.dms_decay_ratio = dms_decay_ratio
+        self.trainer.dms_refine_ratio = dms_refine_ratio
         self.trainer.kd = kd
         self.trainer.kd_teacher = kd_teacher
         self.trainer.kd_lambda = kd_lambda
