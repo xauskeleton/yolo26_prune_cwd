@@ -213,6 +213,63 @@ model.train(
 - **Van de**: DMS hooks tao float32 output, AMP cast model sang float16 → RuntimeError khi validation
 - **Fix**: Remove DMS hooks truoc validation, re-register sau validation trong `validate()` method
 
+## DMS: Chi tiet ky thuat
+
+### Soft Mask Pipeline
+Moi layer co N channels, tham so `a ∈ [16/N, 1-8/N]`, Taylor buffer T ∈ R^N.
+
+**Buoc 1 — Taylor Importance**: Tinh dong gop cua tung channel toi loss.
+```
+T_new = (mask × grad)²                    # first-order Taylor expansion
+T ← 0.99 × T + 0.01 × T_new              # EMA on dinh qua nhieu batch
+```
+- `grad` phai chia cho AMP scale truoc khi tinh (vi AMP nhan gradient ~65536x)
+- Variants: taylor `(m·g)²`, snip `|m·g|`, fisher `g²`
+
+**Buoc 2 — STE Differentiable Ranking**: Sap xep channels ma van co gradient.
+```
+vm = T_i - T_j                             # pairwise difference [N×N]
+c = (vm >= 0).float() - vm.detach() + vm   # STE trick
+c_ranked = mean(c, dim=-1)                 # rank ∈ [0,1]
+c_prime = 1 - c_ranked                     # dao: quan trong → gia tri thap
+```
+STE (Straight-Through Estimator, Bengio 2013): forward dung hard comparison (chinh xac),
+backward truyen gradient nhu linear (co gradient). Can thiet vi sort() khong co gradient.
+
+**Buoc 3 — Sigmoid Mask**:
+```
+mask = sigmoid(-(c_prime - a) × N)
+```
+- `a` la nguong cat (learnable): a lon → giu nhieu, a nho → cat nhieu
+- `N` lam mask gan binary: channel duoc giu (≈1) hoac cat (≈0)
+
+### Ap dung mask
+Mask nhan vao **input cua Conv2d** (forward pre-hook):
+```
+Conv.input ← mask × Conv.input
+```
+
+### Loss
+```
+L = L_detect + λ × L_resource
+L_resource = log(FLOPs_hien_tai / FLOPs_target)   khi > target, else 0
+```
+
+### 2-Phase Scheduler
+- Phase 1 [0%, 80%): Progressive target tang dan `1-(1-final)^ratio`. Cho Taylor importance thoi gian tich luy.
+- Phase 2 [80%, 100%]: Tat resource loss, chi train detection (refine).
+
+### Clamp
+- `a_min = 16/N`: moi layer giu toi thieu 16 channels (tranh bottleneck)
+- `a_max = 1 - 8/N`: dam bao ket qua chia het cho 8 (GPU alignment)
+
+### Gradient flow
+```
+L_resource → FLOPs → mask → a
+L_detect  → Conv → mask → grad → Taylor buffer → ranking → mask → a
+```
+`a` nhan gradient tu ca 2 loss. Taylor buffer cap nhat ranking → thay doi mask → thay doi a.
+
 ## dms/dms_utils.py - Cac ham co san
 
 ### Pruning helpers
