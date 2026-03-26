@@ -419,10 +419,10 @@ class BaseTrainer:
                 v.requires_grad = False
             elif not v.requires_grad and v.dtype.is_floating_point:  # only floating point Tensor can require gradients
                 LOGGER.warning(
-                        f"setting 'requires_grad=True' for frozen layer '{k}'. "
-                        "See ultralytics.engine.trainer for customization of frozen layers."
-                    )
-                    v.requires_grad = True
+                    f"setting 'requires_grad=True' for frozen layer '{k}'. "
+                    "See ultralytics.engine.trainer for customization of frozen layers."
+                )
+                v.requires_grad = True
 
         # Check AMP
         self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
