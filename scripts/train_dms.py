@@ -11,7 +11,6 @@ def main():
         device=0,
         # DMS
         dms=True,
-        dms_importance="taylor",
         dms_taylor_type="taylor",
         dms_target=0.70,
         dms_lambda=1.0,

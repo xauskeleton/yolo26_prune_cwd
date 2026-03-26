@@ -570,11 +570,35 @@ def build_conv_bn_mapping(model, ignore_bn_list):
             in_bn = idx_to_in_bn.get(layer_idx)     # first conv of C3k2/SPPF/C2PSA
         elif sub == 'cv2.conv':
             m_type = layers[layer_idx][2] if layer_idx < len(layers) else ''
-            if m_type in ('SPPF', 'C2PSA'):
+            if m_type == 'SPPF':
+                # cv2 input = cat(cv1_out, pool1, ..., pool_n)
+                # All from same source → replicate cv1.bn mask
+                cv1_bn = f"model.{layer_idx}.cv1.bn"
+                cv1_ch = bn_channels.get(cv1_bn, 0)
+                if cv1_ch > 0 and m.in_channels > cv1_ch:
+                    in_bn = [cv1_bn] * (m.in_channels // cv1_ch)
+                else:
+                    in_bn = cv1_bn
+            elif m_type == 'C2PSA':
+                # cv2 input = cat(a, b) from cv1.chunk → 2*c_ = cv1.bn channels
                 in_bn = f"model.{layer_idx}.cv1.bn"
             elif m_type == 'C3k2':
-                # cv2 = cat(left_half + bottleneck outputs) → cv1.bn dominant
-                in_bn = f"model.{layer_idx}.cv1.bn"
+                # cv2 input = cat(chunks, m0_out, m1_out, ...)
+                # cv1.bn covers chunks; each m[j] output needs its own BN
+                in_bns = [f"model.{layer_idx}.cv1.bn"]
+                for mj in range(100):
+                    c3k_bn = f"model.{layer_idx}.m.{mj}.cv3.bn"
+                    btl_bn = f"model.{layer_idx}.m.{mj}.cv2.bn"
+                    seq_bn = f"model.{layer_idx}.m.{mj}.0.cv2.bn"
+                    if c3k_bn in bn_channels:
+                        in_bns.append(c3k_bn)
+                    elif btl_bn in bn_channels:
+                        in_bns.append(btl_bn)
+                    elif seq_bn in bn_channels:
+                        in_bns.append(seq_bn)
+                    else:
+                        break
+                in_bn = in_bns
             else:
                 in_bn = None
         elif layer_idx in detect_scale_inputs:
@@ -627,24 +651,33 @@ def _resolve_internal_in_bn(conv_name, layer_idx, bn_channels):
         j = int(sub_parts[1])
         cv_name = sub_parts[2]  # 'cv1', 'cv2', or 'cv3'
 
-        # C3k cv3: cat(m_out, cv2_out) → proxy: cv1.bn
-        if cv_name == 'cv3':
-            return f"model.{layer_idx}.m.{j}.cv1.bn"
-
         # Check actual module type: C3k has cv3.bn, Bottleneck does not
         is_c3k = f"model.{layer_idx}.m.{j}.cv3.bn" in bn_channels
 
+        # C3k cv3: input = cat(m(cv1(x)), cv2(x)) → need list of 2 BNs
+        if cv_name == 'cv3':
+            # Find last Bottleneck in C3k.m for m-branch output BN
+            last_k = 0
+            while f"model.{layer_idx}.m.{j}.m.{last_k + 1}.cv2.bn" in bn_channels:
+                last_k += 1
+            m_out_bn = f"model.{layer_idx}.m.{j}.m.{last_k}.cv2.bn"
+            cv2_bn = f"model.{layer_idx}.m.{j}.cv2.bn"
+            if m_out_bn in bn_channels and cv2_bn in bn_channels:
+                return [m_out_bn, cv2_bn]
+            return None
+
         if is_c3k:
-            # C3k cv1 and cv2 are PARALLEL - both take same input
+            # C3k cv1/cv2: input = chunk of parent C3k2.cv1 (self.c channels)
+            # Parent cv1.bn has 2*self.c channels → size mismatch
             if j == 0:
-                return f"model.{layer_idx}.cv1.bn"  # chunk right_half
+                return None  # no single BN for chunk half
             else:
                 return f"model.{layer_idx}.m.{j-1}.cv3.bn"  # prev C3k output
         else:
             # Bottleneck[J] directly inside C3k2
             if cv_name == 'cv1':
                 if j == 0:
-                    return f"model.{layer_idx}.cv1.bn"  # chunk right_half
+                    return None  # chunk half, no matching single BN
                 else:
                     return f"model.{layer_idx}.m.{j-1}.cv2.bn"  # prev Bottleneck
             elif cv_name == 'cv2':
