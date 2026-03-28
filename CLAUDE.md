@@ -1,5 +1,16 @@
 # YOLOv26 Pruning + Distillation Project
 
+## Tai lieu tham khao
+- `Tai lieu/Differentiable-Model-Scaling/` — Repo goc ICML 2024 paper "Differentiable Model Scaling using Differentiable Topk"
+  - `dms/dtopk_src.py` — Core differentiable top-k operator
+  - `dms/modules/mutable.py` — DTPTMutableChannelImp, DMSMutableMixIn (learnable `e` param, taylor hooks)
+  - `dms/modules/op.py` — ImpConv2d (mask at conv input), soft_flop (FLOPs through mask)
+  - `dms/modules/algorithm.py` — DmsAlgorithmMixin, BaseDTPAlgorithm
+  - `dms/modules/scheduler.py` — DMSScheduler (progressive target, flop_loss, 3-phase)
+  - `dms/modules/mutator.py` — DMSMutator (norm_gradient, limit_value)
+  - `dms/modules/optimizer.py` — DmsOptimWrapper (calls norm_grad after backward)
+  - `applications/efficientnet/` — EfficientNet DMS example (timm_pruning.py = training script)
+
 ## Cau truc project
 ```
 yolo/
@@ -81,11 +92,11 @@ model.train(
     data="coco.yaml", epochs=10,
     dms=True,
     dms_target=0.3,          # target pruning ratio (0.3 = cat 30%)
-    dms_lambda=1.0,           # trong so resource loss
-    dms_lr=2e-5,              # learning rate cho a params (constant, khong decay)
+    dms_lambda=100.0,          # trong so resource loss (repo goc: 100~1000)
+    dms_lr=4e-4,              # learning rate cho a params (repo goc: 4e-4, constant, khong decay)
     dms_taylor_type="taylor", # "taylor" (default), "snip", "fisher"
     dms_decay_ratio=0.8,      # 80% epochs: progressive target (default=0.8)
-    dms_refine_ratio=0.2,     # 20% epochs: tat resource loss, refine detection (default=0.2)
+    dms_grad_scale=-1.0,      # gradient normalization: -1=OFF, >=0=ON (auto-balance task/flop grad)
 )
 ```
 - Importance: Taylor (Conv input pre-hook + STE ranking + AMP unscale)
@@ -94,10 +105,15 @@ model.train(
   - `"snip"`: |mask * grad| — SNIP criterion, it sensitive voi outlier
   - `"fisher"`: grad^2 — Fisher information (Hessian diagonal approximation)
 - `dms_decay_ratio` (float): ti le epochs cho progressive target phase (default=0.8)
-- `dms_refine_ratio` (float): ti le epochs cho refine phase, tat resource loss (default=0.2)
-- **2-phase scheduler** (matching ICML 2024 paper):
-  - Phase 1 [0%, 80%): Progressive target tang dan tu 0 → final_target. Formula: `target = 1-(1-final)^ratio`
-  - Phase 2 [80%, 100%]: Tat resource loss hoan toan, chi train detection (refine accuracy)
+- `dms_grad_scale` (float): gradient normalization scale (default=-1.0)
+  - `-1.0` (default): OFF — dung `dms_lambda` de can bang thu cong
+  - `>= 0`: ON — auto normalize flop gradient to match task gradient magnitude (EMA)
+  - Khi ON: `dms_lambda` van dung cho loss logging nhung khong anh huong gradient balance
+  - Scale=1.0 nghia la task va flop gradient co cung L2 norm → can bang tu dong
+  - Matching `DMSMutator.norm_gradient()` trong ICML 2024 repo
+- **2-phase scheduler**:
+  - Phase 1 [0%, decay_ratio): Progressive target tang dan tu 0 → final_target. Formula: `target = 1-(1-final)^ratio`
+  - Phase 2 [decay_ratio, 100%]: Fixed target, resource loss van ON (stabilize)
 - Output: checkpoint chua `dms_a_params` → extract bang `python dms/extract_ratios.py --ckpt <path>`
 - Ket qua: file YAML chua per-layer ratio → dung voi `pruning/prune_*.py --layer-ratio`
 
@@ -254,10 +270,15 @@ Conv.input ← mask × Conv.input
 L = L_detect + λ × L_resource
 L_resource = log(FLOPs_hien_tai / FLOPs_target)   khi > target, else 0
 ```
+**QUAN TRONG**: FLOPs_hien_tai tinh qua **mask** (sigmoid), KHONG qua `(1-a)` truc tiep.
+- Repo goc: `in_c = soft_mask_sum(mask)`, `flop = k² × in_c × out_c / groups × h × w`
+- `soft_mask_sum` dung STE: forward = hard count, backward = soft sum (qua sigmoid)
+- Dieu nay dam bao gradient cua resource loss va detection loss **cung scale** (ca 2 di qua sigmoid)
+- Neu dung `(1-a)` truc tiep: resource gradient nho ~N/4 lan → can lambda cuc lon (10000+)
 
 ### 2-Phase Scheduler
 - Phase 1 [0%, 80%): Progressive target tang dan `1-(1-final)^ratio`. Cho Taylor importance thoi gian tich luy.
-- Phase 2 [80%, 100%]: Tat resource loss, chi train detection (refine).
+- Phase 2 [decay_ratio, 100%]: Fixed target, resource loss van ON (stabilize).
 
 ### Clamp
 - `a_min = 16/N`: moi layer giu toi thieu 16 channels (tranh bottleneck)
@@ -265,10 +286,26 @@ L_resource = log(FLOPs_hien_tai / FLOPs_target)   khi > target, else 0
 
 ### Gradient flow
 ```
-L_resource → FLOPs → mask → a
-L_detect  → Conv → mask → grad → Taylor buffer → ranking → mask → a
+L_resource → FLOPs → soft_mask_retain(mask) → mask → sigmoid((c_ranked - a) × N) → a    (scale ~N)
+L_detect  → Conv → input × mask → mask → sigmoid((c_ranked - a) × N) → a                (scale ~N)
+Taylor:     L_detect → Conv → mask_hook → Taylor buffer (EMA, no_grad) → ranking → mask
 ```
-`a` nhan gradient tu ca 2 loss. Taylor buffer cap nhat ranking → thay doi mask → thay doi a.
+- `a` nhan gradient tu ca 2 loss, **ca 2 di qua sigmoid** → cung scale (tu nhien can bang)
+- Taylor buffer cap nhat rieng qua backward hook (no_grad), chi anh huong ranking
+- Repo goc config: `lambda=100~1000`, `lr=4e-4`, 1 optimizer (model + mutator params)
+
+### Gradient normalization (`dms_grad_scale`)
+Matching `DMSMutator.norm_gradient()` tu ICML 2024 repo.
+- **Van de**: detection gradient >> resource gradient tren `a` → can lambda lon (100~1000) de can bang
+- **Giai phap**: tu dong normalize flop grad L2 norm = task grad L2 norm (EMA tracking)
+- **Implementation**: dung `torch.autograd.grad` tach resource gradient truoc backward, sau backward tru de co task gradient, normalize, combine
+- **Flow khi ON** (`dms_grad_scale >= 0`):
+  1. Truoc backward: `flop_grad = autograd.grad(resource_loss, a_params)`
+  2. Sau backward: `task_grad = a.grad - flop_grad`, unscale ca 2 boi AMP scale
+  3. EMA: `ema_task_norm = 0.99 * ema + 0.01 * task_norm` (smooth tracking)
+  4. Normalize: `flop_normalized = flop_grad / flop_norm * ema_task_norm`
+  5. Combine: `a.grad = task_grad + flop_normalized * grad_scale`
+- **Khi OFF** (`dms_grad_scale=-1`): chi unscale a.grad nhu cu (can lambda thu cong)
 
 ## dms/dms_utils.py - Cac ham co san
 

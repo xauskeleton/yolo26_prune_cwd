@@ -1,1 +1,1 @@
-python scripts/train_dms.py
+python scripts/train_dms_taylor.py

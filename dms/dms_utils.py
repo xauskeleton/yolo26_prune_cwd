@@ -768,32 +768,55 @@ def _resolve_detect_in_bn(conv_name, layer_idx, scale_inputs):
     return None
 
 
+def _soft_mask_retain(mask):
+    """
+    STE retention from mask (matching ICML 2024 paper soft_mask_sum).
+
+    Forward: hard count (channels >= 0.5) / N  → accurate FLOPs estimate
+    Backward: soft sum / N                     → smooth gradient through sigmoid
+    """
+    N = mask.numel()
+    soft = mask.sum() / N
+    with torch.no_grad():
+        hard = (mask >= 0.5).float().sum() / N
+    return hard - soft.detach() + soft  # STE: forward=hard, backward=soft
+
+
 def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
-                          total_flops, target_ratio):
+                          total_flops, target_ratio, mask_manager=None):
     """
     GFLOPs-based resource constraint (differentiable w.r.t a params).
 
     Paper Eq. 5-6:
         loss = log(r_e / r_t) if r_e > r_t, else 0
 
-    Exact per-conv FLOPs:
-        - regular:   effective = original × (1-a_in) × (1-a_out)
-        - depthwise: effective = original × (1-a_out)
-        - concat in: weighted average retention by channel count
+    Matching ICML 2024 paper: FLOPs computed through soft mask with STE,
+    so resource gradient flows through the same sigmoid as detection gradient.
 
     Args:
-        a_params:     Dict {bn_name: nn.Parameter}
-        conv_flops:   Dict {conv_name: flops} from profiling
-        conv_bn_map:  Dict {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
-        bn_channels:  Dict {bn_name: num_features}
-        total_flops:  Total original FLOPs
-        target_ratio: Target pruning ratio (e.g., 0.3 = remove 30%)
+        a_params:      Dict {bn_name: nn.Parameter}
+        conv_flops:    Dict {conv_name: flops} from profiling
+        conv_bn_map:   Dict {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
+        bn_channels:   Dict {bn_name: num_features}
+        total_flops:   Total original FLOPs
+        target_ratio:  Target pruning ratio (e.g., 0.3 = remove 30%)
+        mask_manager:  DMSMaskManager instance (compute retention through mask)
 
     Returns:
         torch.Tensor: Resource constraint loss (scalar, differentiable)
     """
     device = next(iter(a_params.values())).device
     effective_flops = torch.tensor(0.0, device=device)
+
+    def _get_retain(bn_name):
+        """Get retention ratio for a BN layer through mask (or 1.0 if not prunable)."""
+        if bn_name not in a_params:
+            return 1.0
+        if mask_manager is not None:
+            mask = mask_manager.compute_mask(bn_name)
+            return _soft_mask_retain(mask)
+        else:
+            return 1.0 - a_params[bn_name]
 
     for conv_name, flops in conv_flops.items():
         info = conv_bn_map.get(conv_name)
@@ -805,32 +828,24 @@ def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
         in_bn = info.get('in_bn')
         is_dw = info['is_depthwise']
 
-        # Output retention
-        a_out = a_params.get(out_bn)
-        retain_out = (1.0 - a_out) if a_out is not None else 1.0
+        retain_out = _get_retain(out_bn)
 
-        # Compute ratio
         if is_dw:
             ratio = retain_out
         elif in_bn is None:
-            # Cannot resolve input → assume input not prunable
             ratio = retain_out
         elif isinstance(in_bn, list):
-            # Concat input: weighted average retention
             total_ch = 0.0
             weighted_retain = torch.tensor(0.0, device=device)
             for bn_name in in_bn:
                 ch = bn_channels.get(bn_name, 0)
-                a_in = a_params.get(bn_name)
-                r = (1.0 - a_in) if a_in is not None else 1.0
+                r = _get_retain(bn_name)
                 total_ch += ch
                 weighted_retain = weighted_retain + ch * r
             retain_in = weighted_retain / total_ch if total_ch > 0 else 1.0
             ratio = retain_in * retain_out
         else:
-            # Single input BN
-            a_in = a_params.get(in_bn)
-            retain_in = (1.0 - a_in) if a_in is not None else 1.0
+            retain_in = _get_retain(in_bn)
             ratio = retain_in * retain_out
 
         effective_flops = effective_flops + flops * ratio

@@ -340,6 +340,9 @@ class BaseTrainer:
         self.dms_hooks = []
         self.dms_divisor = getattr(self, 'dms_divisor', 8)
         self.taylor_buffers = {}
+        self._dms_flop_grads = None
+        self._dms_ema_task_norm = None
+        self._dms_ema_flop_norm = None
 
         if self.dms_enabled:
             from dms.dms_utils import (
@@ -648,51 +651,6 @@ class BaseTrainer:
                             preds = self.model(batch["img"])
                             loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
                         elif self.dms_enabled:
-                            # ====== DMS NaN debug: test forward KHÔNG có DMS hooks ======
-                            if i == 0 and not getattr(self, '_dms_debug_done', False):
-                                self._dms_debug_done = True
-                                # Test 1: forward KHÔNG hooks
-                                for h in self.dms_hooks:
-                                    h.remove()
-                                with torch.no_grad():
-                                    _loss_no_hook, _ = self.model(batch)
-                                _vals = [l.item() for l in _loss_no_hook]
-                                LOGGER.info(f"[DMS-DEBUG] Forward WITHOUT hooks: loss={_vals}")
-                                # Re-register hooks
-                                self.dms_hooks.clear()
-                                self._dms_reregister_hooks()
-                                # Test 2: forward CÓ hooks
-                                with torch.no_grad():
-                                    _loss_hook, _ = self.model(batch)
-                                _vals2 = [l.item() for l in _loss_hook]
-                                LOGGER.info(f"[DMS-DEBUG] Forward WITH hooks:    loss={_vals2}")
-                                # Test 3: check BN weights cho NaN
-                                _nan_bns = []
-                                for name, m in unwrap_model(self.model).named_modules():
-                                    if isinstance(m, nn.BatchNorm2d):
-                                        if m.weight.isnan().any():
-                                            _nan_bns.append(f"{name}.weight")
-                                        if m.bias.isnan().any():
-                                            _nan_bns.append(f"{name}.bias")
-                                        if m.running_mean is not None and m.running_mean.isnan().any():
-                                            _nan_bns.append(f"{name}.running_mean")
-                                        if m.running_var is not None and m.running_var.isnan().any():
-                                            _nan_bns.append(f"{name}.running_var")
-                                if _nan_bns:
-                                    LOGGER.error(f"[DMS-DEBUG] NaN in BN params: {_nan_bns}")
-                                else:
-                                    LOGGER.info(f"[DMS-DEBUG] All BN params are finite")
-                                # Test 4: check tất cả model weights
-                                _nan_params = []
-                                for name, p in unwrap_model(self.model).named_parameters():
-                                    if p.isnan().any() or p.isinf().any():
-                                        _nan_params.append(name)
-                                if _nan_params:
-                                    LOGGER.error(f"[DMS-DEBUG] NaN/Inf weights: {_nan_params}")
-                                else:
-                                    LOGGER.info(f"[DMS-DEBUG] All model weights are finite")
-                            # ====== end debug ======
-
                             # Reset mask cache before forward (paper: one mask per BN per forward)
                             if hasattr(self, 'dms_mask_manager'):
                                 self.dms_mask_manager.reset_cache()
@@ -706,38 +664,30 @@ class BaseTrainer:
                         # ============================= DMS loss ==========================
                         if self.dms_enabled:
                             from dms.dms_utils import compute_resource_loss
-                            # 3-phase scheduler (matching ICML 2024 paper):
+                            # 2-phase scheduler:
                             #   Phase 1 [0, decay_ratio): progressive target, resource loss ON
-                            #   Phase 2 [decay_ratio, decay_ratio+refine_ratio): fixed target, resource loss ON
-                            #   Phase 3 [decay_ratio+refine_ratio, 1.0]: NO resource loss (refine detection)
+                            #   Phase 2 [decay_ratio, 1.0]: fixed target, resource loss ON
                             epoch_progress = (epoch + 1) / max(self.epochs, 1)
-                            decay_ratio = getattr(self, 'dms_decay_ratio', 0.6)
-                            refine_ratio = getattr(self, 'dms_refine_ratio', 0.2)
+                            decay_ratio = getattr(self, 'dms_decay_ratio', 1.0)
                             final_target = self.dms_target
 
-                            if epoch_progress >= (decay_ratio + refine_ratio):
-                                # Phase 3: refine — no resource loss, only detection
-                                current_target = final_target
-                                self._dms_phase = "refine"
-                                # No resource loss added
-                                self._dms_last_resource = None
+                            if epoch_progress < decay_ratio:
+                                # Phase 1: progressive target
+                                ratio = epoch_progress / max(decay_ratio, 1e-6)
+                                current_target = 1.0 - (1.0 - final_target) ** ratio
+                                self._dms_phase = "progressive"
                             else:
-                                if epoch_progress < decay_ratio:
-                                    # Phase 1: progressive target
-                                    ratio = epoch_progress / max(decay_ratio, 1e-6)
-                                    current_target = 1.0 - (1.0 - final_target) ** ratio
-                                    self._dms_phase = "progressive"
-                                else:
-                                    # Phase 2: fixed target, stabilize
-                                    current_target = final_target
-                                    self._dms_phase = "stabilize"
+                                # Phase 2: fixed target, stabilize
+                                current_target = final_target
+                                self._dms_phase = "stabilize"
 
-                                loss_resource = compute_resource_loss(
-                                    self.a_params, self.conv_flops, self.conv_bn_map,
-                                    self.bn_channels, self.total_flops, current_target,
-                                )
-                                self.loss = self.loss + self.dms_lambda * loss_resource
-                                self._dms_last_resource = loss_resource
+                            loss_resource = compute_resource_loss(
+                                self.a_params, self.conv_flops, self.conv_bn_map,
+                                self.bn_channels, self.total_flops, current_target,
+                                mask_manager=self.dms_mask_manager,
+                            )
+                            self.loss = self.loss + self.dms_lambda * loss_resource
+                            self._dms_last_resource = loss_resource
 
                             self._dms_current_target = current_target
                         # ============================= DMS loss ==========================
@@ -805,6 +755,24 @@ class BaseTrainer:
                         elif epoch == kd_warmup - 1 and ni == 0:
                             LOGGER.info(f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {kd_warmup}")
                     # ============================= KD loss ==========================
+
+                    # ============================= DMS: capture resource gradient for norm_gradient ==
+                    self._dms_flop_grads = None
+                    if (getattr(self, 'dms_enabled', False)
+                            and getattr(self, 'dms_grad_scale', -1.0) >= 0
+                            and getattr(self, '_dms_last_resource', None) is not None):
+                        # Compute resource-only gradient on a_params (cheap: small subgraph)
+                        scaled_res = self.scaler.scale(self.dms_lambda * self._dms_last_resource)
+                        _a_list = list(self.a_params.values())
+                        _res_grads = torch.autograd.grad(
+                            scaled_res, _a_list,
+                            retain_graph=True, allow_unused=True,
+                        )
+                        self._dms_flop_grads = tuple(
+                            g.detach().clone() if g is not None else torch.tensor(0.0, device=self.device)
+                            for g in _res_grads
+                        )
+                    # ============================= DMS: capture resource gradient ====================
 
                     # Backward
                     # ============================= disable scaler ==========================
@@ -924,12 +892,6 @@ class BaseTrainer:
                         f"({(1-rl.retention)*100:.1f}% pruned, target={(1-rl.target_retention)*100:.1f}%) "
                         f"res_loss={rl.item():.4f} | "
                         f"target={ct:.3f}/{self.dms_target:.3f}"
-                    )
-                elif phase == "refine":
-                    LOGGER.info(
-                        f"[DMS] Epoch {epoch} [refine]: avg_a={avg_a:.4f}, "
-                        f"min={min_a:.4f}, max={max_a:.4f} | "
-                        f"NO resource loss (detection-only refine)"
                     )
                 else:
                     LOGGER.info(
@@ -1100,8 +1062,8 @@ class BaseTrainer:
             "dms_lambda": getattr(self, 'dms_lambda', 1.0),
             "dms_lr": getattr(self, 'dms_lr', 2e-5),
             "dms_taylor_type": getattr(self, 'dms_taylor_type', 'taylor'),
-            "dms_decay_ratio": getattr(self, 'dms_decay_ratio', 0.6),
-            "dms_refine_ratio": getattr(self, 'dms_refine_ratio', 0.2),
+            "dms_decay_ratio": getattr(self, 'dms_decay_ratio', 1),
+            "dms_grad_scale": getattr(self, 'dms_grad_scale', -1.0),
             "finetune": getattr(self, 'finetune', False),
             "kd": getattr(self, 'kd_enabled', False),
             "kd_teacher": getattr(self, 'kd_teacher', None),
@@ -1255,26 +1217,74 @@ class BaseTrainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad()
-            # DMS optimizer: unscale thu cong
+
+            # DMS gradient processing: unscale + optional gradient normalization
+            dms_grad_scale = getattr(self, 'dms_grad_scale', -1.0)
             dms_skip = False
             none_count = 0
             grad_vals = []
-            for a in self.a_params.values():
-                if a.grad is not None:
-                    a.grad.div_(dms_scale)
-                    grad_vals.append(a.grad.item())
-                    if not torch.isfinite(a.grad).all():
-                        dms_skip = True
-                else:
-                    none_count += 1
-            if grad_vals:
-                LOGGER.info(
-                    f"[DMS-GRAD] {len(grad_vals)} grads, {none_count} None | "
-                    f"mean={sum(grad_vals)/len(grad_vals):.6e}, "
-                    f"min={min(grad_vals):.6e}, max={max(grad_vals):.6e} | "
-                    f"skip={dms_skip}, scale={dms_scale:.1f}"
-                )
-            else:
+            norm_applied = False
+            task_norm_val = 0.0
+            flop_norm_val = 0.0
+
+            if self._dms_flop_grads is not None and dms_grad_scale >= 0:
+                # --- Gradient normalization (matching ICML 2024 norm_gradient) ---
+                # Separate task vs flop gradients, normalize flop to task magnitude
+                names = list(self.a_params.keys())
+                task_list = []
+                flop_list = []
+                for i, (name, a) in enumerate(self.a_params.items()):
+                    if a.grad is not None:
+                        flop_g = self._dms_flop_grads[i] / dms_scale  # unscale
+                        task_g = a.grad.detach() / dms_scale - flop_g  # total - resource = task
+                        task_list.append(task_g)
+                        flop_list.append(flop_g)
+                    else:
+                        none_count += 1
+                        task_list.append(torch.tensor(0.0, device=self.device))
+                        flop_list.append(torch.tensor(0.0, device=self.device))
+
+                if task_list:
+                    task_grads = torch.stack(task_list)
+                    flop_grads = torch.stack(flop_list)
+                    e_norm = task_grads.norm()
+                    e_flop_norm = flop_grads.norm()
+
+                    if not (e_norm.isnan() or e_flop_norm.isnan()):
+                        # EMA for task norm (matching original: smooth tracking)
+                        if not hasattr(self, '_dms_ema_task_norm') or self._dms_ema_task_norm is None:
+                            self._dms_ema_task_norm = e_norm.clone()
+                        else:
+                            self._dms_ema_task_norm = e_norm * 0.01 + self._dms_ema_task_norm * 0.99
+                        self._dms_ema_flop_norm = e_flop_norm.clone()
+                        task_norm_val = self._dms_ema_task_norm.item()
+                        flop_norm_val = e_flop_norm.item()
+
+                        if e_norm > 0 and e_flop_norm > 0:
+                            # Normalize: scale flop grad to match EMA task norm
+                            flop_normalized = flop_grads / self._dms_ema_flop_norm * self._dms_ema_task_norm
+                            new_grad = task_grads + flop_normalized * dms_grad_scale
+                            for i, (name, a) in enumerate(self.a_params.items()):
+                                if a.grad is not None:
+                                    a.grad.data.fill_(new_grad[i].item())
+                                    grad_vals.append(a.grad.item())
+                                    if not torch.isfinite(a.grad).all():
+                                        dms_skip = True
+                            norm_applied = True
+                self._dms_flop_grads = None
+
+            if not norm_applied:
+                # --- Fallback: simple unscale (original behavior) ---
+                for a in self.a_params.values():
+                    if a.grad is not None:
+                        a.grad.div_(dms_scale)
+                        grad_vals.append(a.grad.item())
+                        if not torch.isfinite(a.grad).all():
+                            dms_skip = True
+                    else:
+                        none_count += 1
+
+            if not grad_vals:
                 LOGGER.warning(f"[DMS-GRAD] ALL {none_count} a_params have grad=None!")
             if not dms_skip:
                 self.dms_optimizer.step()
@@ -1283,7 +1293,7 @@ class BaseTrainer:
             # Clamp a to [min_ch/N, 1 - divisor/N] per layer
             with torch.no_grad():
                 divisor = getattr(self, 'dms_divisor', 8)
-                min_ch = 16
+                min_ch = 24
                 for name, a in self.a_params.items():
                     n_channels = self.bn_channels.get(name, 256)
                     a_min = divisor / n_channels       # prune at least divisor channels (alignment)
@@ -1321,15 +1331,6 @@ class BaseTrainer:
     def preprocess_batch(self, batch):
         """Allow custom preprocessing of model inputs and ground truths depending on task type."""
         return batch
-
-    def _dms_reregister_hooks(self):
-        """Re-register DMS hooks after removal (debug/validation)."""
-        self.dms_hooks.clear()
-        self.dms_mask_manager.reset_cache()
-        modules_dict = dict(unwrap_model(self.model).named_modules())
-        self.dms_hooks = self.dms_mask_manager.register_all_hooks(
-            self.conv_bn_map, modules_dict,
-        )
 
     def validate(self):
         """Run validation on val set using self.validator.
@@ -1463,6 +1464,8 @@ class BaseTrainer:
                     "freeze",
                     "val",
                     "plots",
+                    "project",
+                    "name",
                 ):  # allow arg updates to reduce memory or update device on resume
                     if k in overrides:
                         setattr(self.args, k, overrides[k])

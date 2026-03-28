@@ -2,25 +2,26 @@ from ultralytics import YOLO
 
 
 def main():
-    model = YOLO('weights/yolo26m_baseline.pt')
+    model = YOLO('yolo26n.pt')
 
     results = model.train(
-        data='VOC.yaml',
-        batch=32,
-        epochs=10,
+        data='coco8.yaml',
+        batch=64,
+        epochs=30,
         device=0,
         # DMS
         dms=True,
         dms_taylor_type="taylor",
         dms_target=0.70,
-        dms_lambda=1.0,
-        dms_lr=2e-5,
-        dms_decay_ratio=0.8,
-        dms_refine_ratio=0.2,
+        dms_lambda=40.0,
+        dms_lr=1e-2,
+        dms_grad_scale=-1,    # -1=OFF (default, match paper), >=0=ON auto-balance
         # Save
         project="dms_train",
         name="taylor",
-        save_period=2,
+        save_period=5,
+        workers=2,
+
     )
 
     print("Train xong! Ket qua luu tai:", results.save_dir)
