@@ -205,7 +205,7 @@ def main():
     for name, wpath in zip(args.names, args.weights):
         params, gflops, model_obj = get_model_info(wpath)
         models_info[name] = {"path": wpath, "params": params, "gflops": gflops, "model": model_obj}
-        print(f"  {name:<20s}  Params={params:.2f}M  GFLOPs={gflops:.1f}  ({wpath})")
+        print(f"  {name:<20s}  Params={params:.2f}M  GFLOPs={gflops * 2:.1f}  ({wpath})")
 
     # ---- Benchmarks ----
     all_results = OrderedDict()  # mode -> {name -> result}
@@ -303,7 +303,7 @@ def main():
 
     # Rows
     for name, info in models_info.items():
-        row = f"{name:<20s} | {info['params']:>7.2f}M | {info['gflops']:>7.1f}"
+        row = f"{name:<20s} | {info['params']:>7.2f}M | {info['gflops'] * 2:>7.1f}"
         for m in modes_with_results:
             mr = all_results[m]
             if name in mr and 1 in mr[name]:
