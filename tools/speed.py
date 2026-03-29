@@ -9,7 +9,7 @@ Best practices from PyTorch docs, Ultralytics, MMDetection, NVIDIA:
 
 Usage:
     python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/yolo26m_baseline_l1norm_div8_dayroi.pt
-    python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/yolo26m_baseline_l1norm_div8_dayroi.pt --device cpu
+    python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/l1_best.pt --device cpu --batch 1 --threads 28
     python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/yolo26m_baseline_l1norm_div8_dayroi.pt --batch 1 4 8 16 32 64
     python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/yolo26m_baseline_l1norm_div8_dayroi.pt --device cpu --threads 4
 """
@@ -87,7 +87,12 @@ def load_model(model_path, device):
 def get_flops_params(model_nn, img_size, device):
     """Get GFLOPs and params."""
     dummy = torch.randn(1, 3, img_size, img_size).to(device)
-    flops, params = profile(deepcopy(model_nn), inputs=(dummy,), verbose=False)
+    m = deepcopy(model_nn)
+    # thop uses torch.jit.trace which can't handle (tensor, dict) output
+    # Set export=True so Detect head returns a single tensor
+    if hasattr(m, 'model') and hasattr(m.model[-1], 'export'):
+        m.model[-1].export = True
+    flops, params = profile(m, inputs=(dummy,), verbose=False)
     return flops / 1e9, params / 1e6
 
 

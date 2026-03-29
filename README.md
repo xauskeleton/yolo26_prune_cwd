@@ -7,17 +7,15 @@ Channel pruning cho YOLOv26 object detection, ket hop DMS (Differentiable Model 
 **Phan I — Cach dung**
 - [Pipeline tong quan](#pipeline-tong-quan)
 - [Cai dat](#cai-dat)
-- [1. Sparsity Training](#1-sparsity-training)
-- [2. DMS - Differentiable Model Scaling](#2-dms---differentiable-model-scaling)
-- [3. Channel Pruning (6 methods)](#3-channel-pruning-6-methods)
-- [4. Finetune](#4-finetune)
-- [5. Knowledge Distillation (4 methods)](#5-knowledge-distillation-4-methods)
-- [6. Do performance](#6-do-performance)
+- [1. DMS - Differentiable Model Scaling](#1-dms---differentiable-model-scaling)
+- [2. Channel Pruning (6 methods)](#2-channel-pruning-6-methods)
+- [3. Finetune](#3-finetune)
+- [4. Knowledge Distillation (4 methods)](#4-knowledge-distillation-4-methods)
+- [5. Do performance](#5-do-performance)
 - [Bang tham khao nhanh](#bang-tham-khao-nhanh)
 
 **Phan II — Chi tiet ky thuat**
 - [Cau truc du an](#cau-truc-du-an)
-- [Sparsity Training — Ben trong](#sparsity-training--ben-trong)
 - [DMS — Ben trong](#dms--ben-trong)
 - [Pruning — Ben trong](#pruning--ben-trong)
 - [Finetune — Ben trong](#finetune--ben-trong)
@@ -32,53 +30,48 @@ Channel pruning cho YOLOv26 object detection, ket hop DMS (Differentiable Model 
 ```
 best.pt (model goc)
   │
-  ├─ [1] Sparsity Training (sr)      → ep BN gamma ve 0, chuan bi prune
-  ├─ [2] DMS Search (dms)            → tim per-layer prune ratio toi uu
+  ├─ [1] DMS Search (dms)            → tim per-layer prune ratio toi uu
   │
-  ├─ [3] Prune (6 methods)           → cat kenh, tao pruned model
+  ├─ [2] Prune (6 methods)           → cat kenh, tao pruned model
   │
-  ├─ [4] Finetune                    → recover accuracy
-  ├─ [5] KD (4 methods)              → distill tu teacher
+  ├─ [3] Finetune                    → recover accuracy
+  ├─ [4] KD (4 methods)              → distill tu teacher
   │
-  └─ [6] speed.py                    → do va so sanh performance
+  └─ [5] tools/speed.py              → do va so sanh performance
 ```
 
-**Pipeline day du:**
+**Pipeline chinh (L1 norm, don gian nhat):**
 ```bash
-# 1. Sparsity training
-python scripts/train_sparsity.py
+# Prune truc tiep tu pretrained model (khong can SR)
+python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
 
-# 2. DMS search → extract ratios
+# Finetune + CWD distillation
+python scripts/finetune_cwd.py
+```
+
+**Pipeline DMS (per-layer ratio):**
+```bash
+# 1. DMS search → extract ratios
 python scripts/train_dms.py
 python dms/extract_ratios.py --ckpt runs/.../best.pt --output dms_ratios.yaml
 
+# 2. Prune voi per-layer ratio
+python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml \
+    --prune-ratio 0.5 --layer-ratio dms_ratios.yaml
 
-
-# 3. Prune (chon 1 trong 6 methods)
-python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --layer-ratio dms_ratios.yaml
-
-# 4. Finetune + KD
+# 3. Finetune + CWD
 python scripts/finetune_cwd.py
-
-# 5. Do performance
-python speed.py
 ```
 
-**Pipeline rut gon (khong DMS):**
-```bash
-python scripts/train_sparsity.py
-python pruning/prune_bn_gamma.py --weights runs/.../best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
-python scripts/finetune.py
-```
+### Ket qua thuc nghiem
 
-**Pipeline L1 norm (don gian nhat, khong can SR):**
-```bash
-# Prune truc tiep tu pretrained model
-python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
+| Pipeline | mAP50-95 | Ghi chu |
+|----------|----------|---------|
+| L1 uniform prune + CWD | >= baseline | Regularization effect, method chinh |
+| DMS L1 per-layer + prune | kem uniform | Magnitude ≠ importance, tao bottleneck |
+| DMS Taylor per-layer + prune | dang optimize | Gradient-based, do dung contribution |
 
-# Finetune
-python scripts/finetune.py
-```
+> **Ket luan**: L1 norm pruning > BN gamma pruning. Sparsity Regularization khong can thiet cho L1.
 
 ---
 
@@ -88,49 +81,13 @@ Du an dua tren Ultralytics source code. Cac dependency chinh:
 ```
 torch
 ultralytics
-thop          # do FLOPs (speed.py)
+thop          # do FLOPs (tools/speed.py)
 pyyaml
 ```
 
 ---
 
-## 1. Sparsity Training
-
-Them L1 penalty len BN gamma de day kenh khong quan trong ve 0, chuan bi cho pruning.
-
-```python
-from ultralytics import YOLO
-
-if __name__ == '__main__':
-    model = YOLO("weights/best.pt")
-    model.train(
-        data="VOC.yaml",
-        epochs=100,
-        batch=16,
-        imgsz=640,
-        sr=1e-4,
-    )
-```
-
-### Tham so
-
-| Tham so | Kieu  | Mac dinh | Mo ta |
-|---------|-------|----------|-------|
-| `sr`    | float | None     | Sparsity rate. Dat > 0 de kich hoat |
-
-### Khuyen nghi
-
-| Muc tieu prune | sr | Ghi chu |
-|----------------|-----|---------|
-| Nhe (20-30%) | `1e-4` | On dinh, it anh huong accuracy |
-| Vua (30-50%) | `3e-4` ~ `5e-4` | Can balance voi accuracy |
-| Manh (>50%) | `5e-4` ~ `1e-3` | Co the mat accuracy, can finetune nhieu |
-
-> `sr` decay tu dong: `sr * (1 - 0.9 * epoch/epochs)`, tranh ep qua manh cuoi training.
-
----
-
-## 2. DMS - Differentiable Model Scaling
+## 1. DMS - Differentiable Model Scaling
 
 Tu dong tim ti le prune toi uu **cho tung layer** thong qua gradient descent. Thay vi dat 1 ti le chung, DMS hoc duoc layer nao nen prune nhieu, layer nao nen giu lai.
 
@@ -145,7 +102,7 @@ if __name__ == '__main__':
     model = YOLO("weights/best.pt")
     model.train(
         data="VOC.yaml",
-        epochs=50,
+        epochs=10,
         dms=True,
         dms_target=0.3,
     )
@@ -157,11 +114,11 @@ if __name__ == '__main__':
 |---------|------|----------|-------|
 | `dms` | bool | `False` | Bat/tat DMS |
 | `dms_target` | float | `0.3` | Ti le FLOPs muon giam (0.3 = giam 30%) |
-| `dms_lambda` | float | `1.0` | Trong so resource loss |
-| `dms_lr` | float | `5e-3` | Learning rate cho a params (Adam rieng) |
-| `dms_freeze` | bool | `False` | True = dong bang model, chi train a params |
-| `dms_importance` | str | `"gamma"` | `"gamma"`, `"taylor"`, hoac `"l1"` |
-| `dms_warmup` | int | `0` | So epoch warmup truoc khi DMS bat dau |
+| `dms_lambda` | float | `100.0` | Trong so resource loss (repo goc: 100~1000) |
+| `dms_lr` | float | `4e-4` | Learning rate cho a params (constant, khong decay) |
+| `dms_taylor_type` | str | `"taylor"` | `"taylor"`, `"snip"`, hoac `"fisher"` |
+| `dms_decay_ratio` | float | `0.8` | Ti le epochs cho progressive target phase |
+| `dms_grad_scale` | float | `-1.0` | Gradient normalization scale (-1=OFF, >=0=ON) |
 
 **`dms_target`** — Ti le FLOPs muon giam:
 
@@ -172,18 +129,22 @@ if __name__ == '__main__':
 | `0.5` | Prune manh |
 | `0.7` | Rat manh, co the mat accuracy nhieu |
 
-**`dms_importance`** — Cach tinh do quan trong cua kenh:
+**`dms_taylor_type`** — Cach tinh do quan trong cua kenh:
 
-| Mode | Uu/nhuoc |
-|------|----------|
-| `"gamma"` | Nhanh, don gian. Dung `\|BN.weight\|` |
-| `"taylor"` | Chinh xac hon, can vai epoch de on dinh. Dung `(mask * grad)^2` voi EMA |
-| `"l1"` | L1 norm cua Conv filter. Consistent voi L1 norm pruning, khong can SR training |
+| Mode | Cong thuc | Mo ta |
+|------|-----------|-------|
+| `"taylor"` | `(mask * grad)^2` | First-order Taylor expansion (default) |
+| `"snip"` | `\|mask * grad\|` | SNIP criterion, sensitive voi outlier |
+| `"fisher"` | `grad^2` | Fisher information (Hessian diagonal approx) |
 
-**`dms_warmup`** — So epoch warmup:
-- Trong warmup: model train binh thuong, `a` params dong bang, khong co resource loss
-- Sau warmup: resource loss ramp up linearly trong 5 epochs tiep theo
-- Khuyen nghi: `2` ~ `5` epoch de model on dinh truoc khi DMS bat dau
+**`dms_grad_scale`** — Gradient normalization:
+- `-1.0` (default): OFF — dung `dms_lambda` de can bang thu cong
+- `>= 0`: ON — auto normalize flop gradient to match task gradient magnitude (EMA)
+- Khi ON: `dms_lambda` van dung cho loss logging nhung khong anh huong gradient balance
+
+**`dms_decay_ratio`** — 2-phase scheduler:
+- Phase 1 [0%, decay_ratio): Progressive target tang dan tu 0 → final_target
+- Phase 2 [decay_ratio, 100%]: Fixed target, resource loss van ON (stabilize)
 
 ### Extract ratios sau DMS
 
@@ -193,7 +154,7 @@ python dms/extract_ratios.py --ckpt runs/.../best.pt --output dms_ratios.yaml
 
 Dung voi bat ky pruning method nao:
 ```bash
-python pruning/prune_bn_gamma.py --weights runs/.../best.pt --cfg cfg/yolo26m.yaml --layer-ratio dms_ratios.yaml
+python pruning/prune_l1norm.py --weights runs/.../best.pt --cfg cfg/yolo26m.yaml --layer-ratio dms_ratios.yaml
 ```
 
 ### Vi du nang cao
@@ -202,64 +163,69 @@ python pruning/prune_bn_gamma.py --weights runs/.../best.pt --cfg cfg/yolo26m.ya
 from ultralytics import YOLO
 
 if __name__ == '__main__':
-    # Search nhanh (freeze model)
+    # Taylor importance + gradient normalization
     model = YOLO("weights/best.pt")
     model.train(
-        data="VOC.yaml", epochs=30,
-        dms=True, dms_target=0.3, dms_lambda=1.0,
-        dms_freeze=True, dms_lr=1e-2,
+        data="VOC.yaml", epochs=10,
+        dms=True, dms_target=0.3,
+        dms_lambda=100.0, dms_lr=4e-4,
+        dms_taylor_type="taylor",
+        dms_grad_scale=1.0,       # auto balance task/flop gradient
     )
 
-    # L1 norm importance + warmup
+    # Fisher importance + manual lambda
     model = YOLO("weights/best.pt")
     model.train(
-        data="VOC.yaml", epochs=50,
+        data="VOC.yaml", epochs=10,
         dms=True, dms_target=0.3,
-        dms_importance="l1", dms_warmup=3,
+        dms_lambda=500.0, dms_lr=4e-4,
+        dms_taylor_type="fisher",
+        dms_grad_scale=-1.0,      # OFF, dung lambda thu cong
     )
 ```
 
 ---
 
-## 3. Channel Pruning (6 methods)
+## 2. Channel Pruning (6 methods)
 
 6 phuong phap pruning, tat ca dung chung pipeline tu `pruning/prune_common.py`.
+**L1 norm la method chinh**, cho ket qua tot nhat (mAP50-95 >= baseline sau finetune).
 
 ### Cac phuong phap
 
-| Method | File | Can SR? | Mo ta |
-|--------|------|---------|-------|
-| **BN Gamma** | `prune_bn_gamma.py` | Co | Cat kenh dua tren BN gamma magnitude |
-| **L1 Norm** | `prune_l1norm.py` | Khong | Cat kenh dua tren L1 norm cua Conv filter |
-| **Taylor** | `prune_taylor.py` | Khong | Gradient-based importance (can forward+backward) |
-| **LAMP** | `prune_lamp.py` | Khong | Layer-Adaptive Magnitude Pruning |
-| **FPGM** | `prune_fpgm.py` | Khong | Filter Pruning via Geometric Median |
-| **Random** | `prune_random.py` | Khong | Random pruning (baseline) |
+| Method | File | Mo ta |
+|--------|------|-------|
+| **L1 Norm** | `prune_l1norm.py` | **Method chinh.** Cat kenh dua tren L1 norm cua Conv filter |
+| **BN Gamma** | `prune_bn_gamma.py` | Cat kenh dua tren BN gamma magnitude |
+| **Taylor** | `prune_taylor.py` | Gradient-based importance (can forward+backward) |
+| **LAMP** | `prune_lamp.py` | Layer-Adaptive Magnitude Pruning |
+| **FPGM** | `prune_fpgm.py` | Filter Pruning via Geometric Median |
+| **Random** | `prune_random.py` | Random pruning (baseline) |
 
 ### Cach dung
 
 ```bash
-# BN gamma (default, can SR training truoc)
-python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+# L1 norm (method chinh, khong can SR)
+python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
 
-# L1 norm (khong can SR, dung truc tiep tren pretrained)
-python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+# BN gamma
+python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
 
 # Taylor importance (can --data de forward+backward)
-python pruning/prune_taylor.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3 --data VOC.yaml
+python pruning/prune_taylor.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5 --data VOC.yaml
 
 # LAMP (adaptive per-layer)
-python pruning/prune_lamp.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+python pruning/prune_lamp.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
 
 # FPGM (geometric median)
-python pruning/prune_fpgm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+python pruning/prune_fpgm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
 
 # Random (baseline)
-python pruning/prune_random.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+python pruning/prune_random.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5
 
 # Bat ky method nao + DMS per-layer ratio
 python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml \
-    --prune-ratio 0.3 --layer-ratio dms_ratios.yaml
+    --prune-ratio 0.5 --layer-ratio dms_ratios.yaml
 ```
 
 ### CLI Arguments
@@ -275,24 +241,13 @@ python pruning/prune_l1norm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml 
 | `--save-dir` | str | `weights` | Thu muc luu output |
 | `--data` | str | `None` | Dataset (chi can cho Taylor) |
 
-### Benchmark (VOC, prune ratio=0.3)
-
-| Method | mAP50 | mAP50-95 |
-|--------|-------|----------|
-| Baseline (unpruned) | 0.890 | 0.725 |
-| **L1 Norm** | **0.878** | **0.701** |
-| FPGM | 0.873 | 0.698 |
-| Taylor | 0.872 | 0.695 |
-| BN Gamma | 0.865 | 0.689 |
-| Random | 0.865 | 0.689 |
-
 ### Output
 
 File `.pt` chua: `model` (DetectionModelPruned), `maskbndict` (dict mask per BN layer), `config` (divisor, prune_ratio).
 
 ---
 
-## 4. Finetune
+## 3. Finetune
 
 Recover accuracy cho model da prune. **Bat buoc** truyen `finetune=True`.
 
@@ -312,7 +267,7 @@ if __name__ == '__main__':
 
 ---
 
-## 5. Knowledge Distillation (4 methods)
+## 4. Knowledge Distillation (4 methods)
 
 Student (pruned) hoc lai tu teacher (original) qua knowledge distillation. 4 phuong phap, chon qua `kd_method`.
 
@@ -381,16 +336,14 @@ model.train(
 | `kd_teacher` | str | `None` | Path teacher model (**BAT BUOC**) |
 | `kd_method` | str | `"cwd"` | `"cwd"`, `"response"`, `"fitnets"`, `"mgd"` |
 | `kd_lambda` | float | `0.5` | Trong so KD loss |
-| `kd_layers` | str | `"neck"` | `"neck"` hoac `"all"` |
+| `kd_layers` | str | `"neck"` | `"neck"`, `"all"`, `"backbone"`, hoac list indices |
 | `kd_warmup` | int | `5` | So epoch warmup truoc khi bat KD |
 
 ### CWD tham so (chi ap dung cho kd_method="cwd")
 
 | Tham so | Kieu | Mac dinh | Mo ta |
 |---------|------|----------|-------|
-| `cwd_temperature` | float/str | `9.0` | Fixed temperature, hoac `"learnable"` |
-| `cwd_learnable_tau_lr` | float | `1e-3` | Learning rate cho learnable tau |
-| `cwd_learnable_tau_init` | float | `9.0` | Tau khoi tao khi learnable |
+| `cwd_temperature` | float | `9.0` | Temperature cho softmax. Grid search: 4.0 ~ 15.0 |
 
 ### Vi du CWD nang cao
 
@@ -398,7 +351,6 @@ model.train(
 from ultralytics import YOLO
 
 if __name__ == '__main__':
-    # CWD + fixed temperature
     model = YOLO("weights/pruned_div8.pt")
     model.train(
         data="VOC.yaml", epochs=100, finetune=True,
@@ -406,39 +358,45 @@ if __name__ == '__main__':
         kd_lambda=0.5, kd_layers="all",
         cwd_temperature=9.0,
     )
-
-    # CWD + learnable temperature (tu dong, khong can grid search)
-    model = YOLO("weights/pruned_div8.pt")
-    model.train(
-        data="VOC.yaml", epochs=100, finetune=True,
-        kd=True, kd_teacher="weights/best.pt",
-        kd_lambda=0.5, kd_layers="all", kd_warmup=3,
-        cwd_temperature="learnable",
-    )
 ```
 
 ---
 
-## 6. Do performance
+## 5. Do performance
 
 So sanh GFLOPs, Params, Latency, FPS giua model goc va model da prune.
 
 ```bash
-python speed.py
+# GPU benchmark
+python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/l1_best.pt --device 0
+
+# CPU benchmark
+python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/l1_best.pt --device cpu --threads 8
+
+# Custom batch sizes
+python tools/speed.py --orig weights/yolo26m_baseline.pt --pruned weights/l1_best.pt --batch 1 4 8 16 32 64
 ```
 
-Sua `orig_path` va `pruned_path` trong `speed.py`. Yeu cau GPU CUDA va thu vien `thop`.
+| Argument | Kieu | Mac dinh | Mo ta |
+|----------|------|----------|-------|
+| `--orig` | str | - | Path model goc |
+| `--pruned` | str | - | Path model pruned |
+| `--device` | str | `cuda` | `cuda` hoac `cpu` |
+| `--batch` | int[] | `1 2 4` | Batch sizes |
+| `--warmup` | int | auto | Warmup iterations |
+| `--reps` | int | auto | Benchmark repetitions |
+| `--threads` | int | `1` | CPU threads |
 
 Output:
 ```
-============================================================
-Metric          | Original (Best) | Pruned (Div8)   | Giam (%)
-------------------------------------------------------------
-GFLOPs          |           38.80 |           25.16 |    35.1%
-Params (M)      |           20.07 |           12.45 |    38.0%
-Latency (ms)    |            8.23 |            5.67 |    31.1%
-FPS             |           121.5 |           176.4 |    45.2%
-============================================================
+=================================================================
+Metric          | Original          | Pruned            | Giam (%)
+-----------------------------------------------------------------
+GFLOPs          |             38.80 |             23.30 |    39.9%
+Params (M)      |             18.90 |              7.50 |    60.3%
+Latency (ms)    |          8.2±0.3  |          5.1±0.2  |    37.8%
+FPS (bs=1)      |             121.5 |             196.1 |    61.4%
+=================================================================
 ```
 
 ---
@@ -448,18 +406,17 @@ FPS             |           121.5 |           176.4 |    45.2%
 | Nhom | Tham so | Mac dinh | Range khuyen nghi |
 |------|---------|----------|-------------------|
 | **Finetune** | `finetune` | False | `True` khi train pruned model |
-| **SR** | `sr` | None | `1e-4` ~ `5e-4` |
 | **DMS** | `dms_target` | 0.3 | 0.2 ~ 0.5 |
-| | `dms_lambda` | 1.0 | 0.5 ~ 5.0 |
-| | `dms_lr` | 5e-3 | 1e-3 ~ 1e-2 |
-| | `dms_freeze` | False | True (nhanh) / False (chinh xac) |
-| | `dms_importance` | "gamma" | "gamma" / "taylor" / "l1" |
-| | `dms_warmup` | 0 | 0 ~ 5 (khuyen nghi 2-3) |
+| | `dms_lambda` | 100.0 | 100 ~ 1000 |
+| | `dms_lr` | 4e-4 | constant, khong decay |
+| | `dms_taylor_type` | "taylor" | "taylor" / "snip" / "fisher" |
+| | `dms_decay_ratio` | 0.8 | 0.7 ~ 0.9 |
+| | `dms_grad_scale` | -1.0 | -1 (OFF) hoac 1.0 (auto) |
 | **KD** | `kd_method` | "cwd" | "cwd" / "response" / "fitnets" / "mgd" |
 | | `kd_lambda` | 0.5 | 0.3 ~ 1.0 |
 | | `kd_layers` | "neck" | "neck" (nhanh) / "all" (chinh xac) |
 | | `kd_warmup` | 5 | 1 ~ 5 |
-| | `cwd_temperature` | 9.0 | 4.0 ~ 15.0 hoac "learnable" |
+| | `cwd_temperature` | 9.0 | 4.0 ~ 15.0 (grid search) |
 | **Prune** | `--prune-ratio` | 0.5 | 0.2 ~ 0.7 |
 | | `--divisor` | 8 | 8 (GPU) / 16 (Tensor Cores) |
 | | `--model-size` | m | n / s / m / l / x |
@@ -467,11 +424,12 @@ FPS             |           121.5 |           176.4 |    45.2%
 ### Luu y quan trong
 
 1. **`finetune=True` bat buoc** khi train pruned model.
-2. **Khong ket hop** sr, dms, kd cung luc. Chi dung 1 che do moi lan train.
-3. **AMP tu dong tat** khi dung sr. DMS va KD tuong thich AMP.
+2. **Khong ket hop** dms va kd cung luc. Chi dung 1 che do moi lan train.
+3. **DMS tuong thich AMP**, KD co warmup de tranh NaN.
 4. **DMS can extract ratios** truoc khi prune (`python dms/extract_ratios.py`).
 5. **KD can teacher model** chua prune (original best.pt).
 6. **Tren Windows** phai co `if __name__ == '__main__':` trong script.
+7. **L1 norm la method chinh** — khong can Sparsity Training, prune truc tiep tu pretrained.
 
 ---
 
@@ -483,8 +441,8 @@ FPS             |           121.5 |           176.4 |    45.2%
 yolo/
 ├── pruning/                            # 6 pruning methods
 │   ├── prune_common.py                 # Shared pipeline: load_and_prepare, create_masks, finalize_pruning
-│   ├── prune_bn_gamma.py              # BN gamma magnitude pruning (default)
-│   ├── prune_l1norm.py                # L1 norm pruning
+│   ├── prune_bn_gamma.py              # BN gamma magnitude pruning
+│   ├── prune_l1norm.py                # L1 norm pruning (method chinh)
 │   ├── prune_taylor.py                # Taylor importance pruning
 │   ├── prune_lamp.py                  # LAMP adaptive per-layer pruning
 │   ├── prune_fpgm.py                  # FPGM geometric median pruning
@@ -499,13 +457,13 @@ yolo/
 │   └── extract_ratios.py             # Extract DMS ratios from checkpoint → YAML
 │
 ├── scripts/                            # Training/finetune scripts
-│   ├── train_sparsity.py              # Sparsity training (SR)
 │   ├── train_dms.py                   # DMS search training
 │   ├── finetune.py                    # Finetune pruned model
 │   ├── finetune_cwd.py                # Finetune with CWD distillation
 │   └── finetune_kd.py                 # Finetune with KD (Response/FitNets/MGD)
 │
-├── tools/                              # Debug & validation tools
+├── tools/                              # Debug & benchmark tools
+│   ├── speed.py                       # Benchmark: GFLOPs, Params, Latency, FPS
 │   ├── check_sparsity.py             # Check BN sparsity of model
 │   ├── debug_dms_flops.py            # Debug DMS FLOPs computation
 │   ├── validate_pruned.py            # Validate pruned model structure
@@ -517,45 +475,15 @@ yolo/
 ├── ultralytics/
 │   ├── engine/
 │   │   ├── model.py                   # YOLO.train() - nhan tat ca custom args
-│   │   └── trainer.py                 # BaseTrainer - xu ly SR/DMS/KD/finetune
+│   │   └── trainer.py                 # BaseTrainer - xu ly DMS/KD/finetune
 │   └── nn/
 │       ├── tasks_pruned.py            # Build pruned model tu masks
 │       └── modules/
 │           ├── block_pruned.py        # C3k2Pruned, SPPFPruned, C2PSAPruned, ...
 │           └── head_pruned.py         # DetectPruned
 │
-├── speed.py                           # Do GFLOPs, Params, Latency, FPS
 └── weights/                           # Model weights
 ```
-
----
-
-## Sparsity Training — Ben trong
-
-### Y tuong
-
-L1 regularization len BN gamma (`weight`) de day cac kenh khong quan trong ve 0. Sau do pruning dung magnitude cua gamma de quyet dinh kenh nao bi cat.
-
-### Training loop
-
-```
-1. Tat AMP (L1 penalty khong tuong thich voi mixed precision)
-2. Build ignore_bn_list:
-   - Bottleneck co add=True (residual): ignore cv2.bn + parent cv1.bn
-   - PSABlock: ignore tat ca BN ben trong + parent cv1.bn
-   → Nhung BN nay khong duoc ep vi cat se pha vo residual connection
-
-3. Moi training step:
-   loss.backward()
-   sr_actual = sr * (1 - 0.9 * epoch / total_epochs)    # decay tuyen tinh
-   for moi BN khong nam trong ignore_list:
-       BN.weight.grad += sr_actual * sign(BN.weight)     # L1 penalty
-   optimizer.step()    # khong scaler, khong grad clip
-```
-
-### Tai sao tat AMP?
-
-AMP dung fp16 cho forward/backward. L1 gradient rat nho (`sr * sign(w)` ~ 1e-4), de bi round ve 0 trong fp16. Tat AMP dam bao L1 penalty thuc su co tac dung.
 
 ---
 
@@ -563,36 +491,70 @@ AMP dung fp16 cho forward/backward. L1 gradient rat nho (`sr * sign(w)` ~ 1e-4),
 
 ### Y tuong cot loi
 
-Thay vi dat 1 prune ratio chung cho tat ca layer (vd 30%), DMS hoc **per-layer ratio** bang gradient descent. Moi layer co 1 learnable parameter `a` dai dien cho ti le kenh bi cat.
+Thay vi dat 1 prune ratio chung cho tat ca layer (vd 50%), DMS hoc **per-layer ratio** bang gradient descent. Moi layer co 1 learnable parameter `a` dai dien cho ti le kenh duoc giu lai.
 
-### Soft mask mechanism
+### Soft Mask Pipeline
+
+Moi layer co N channels, tham so `a ∈ [16/N, 1-8/N]`, Taylor buffer T ∈ R^N.
+
+**Buoc 1 — Taylor Importance**: Tinh dong gop cua tung channel toi loss.
+```
+T_new = (mask × grad)²                    # first-order Taylor expansion
+T ← 0.99 × T + 0.01 × T_new              # EMA on dinh qua nhieu batch
+```
+- `grad` phai chia cho AMP scale truoc khi tinh (vi AMP nhan gradient ~65536x)
+- Variants: taylor `(m·g)²`, snip `|m·g|`, fisher `g²`
+
+**Buoc 2 — STE Differentiable Ranking**: Sap xep channels ma van co gradient.
+```
+vm = T_i - T_j                             # pairwise difference [N×N]
+c = (vm >= 0).float() - vm.detach() + vm   # STE trick
+c_ranked = mean(c, dim=-1)                 # rank ∈ [0,1]
+c_prime = 1 - c_ranked                     # dao: quan trong → gia tri thap
+```
+STE (Straight-Through Estimator): forward dung hard comparison (chinh xac),
+backward truyen gradient nhu linear (co gradient).
+
+**Buoc 3 — Sigmoid Mask**:
+```
+mask = sigmoid(-(c_prime - a) × N)
+```
+- `a` la nguong cat (learnable): a lon → giu nhieu, a nho → cat nhieu
+- `N` lam mask gan binary: channel duoc giu (≈1) hoac cat (≈0)
+
+### Ap dung mask
+
+Mask nhan vao **input cua Conv2d** (forward pre-hook):
+```
+Conv.input ← mask × Conv.input
+```
+
+### Loss
 
 ```
-1. Tao a = nn.Parameter(init=0.0)
-
-2. Forward hook sau BN:
-   importance = |BN.weight|              # gamma mode (hoac taylor, l1)
-   rank = argsort(importance) / N        # chuan hoa [0,1], DETACHED
-   mask = Sigmoid(N * (rank - a))        # differentiable soft mask
-   output = BN_output * mask             # ap mask len feature
-
-3. Gradient chi chay qua a (vi rank bi detach)
-   → a hoc duoc: tang a = prune nhieu hon, giam a = giu nhieu hon
+L = L_detect + λ × L_resource
+L_resource = log(FLOPs_hien_tai / FLOPs_target)   khi > target, else 0
 ```
+FLOPs_hien_tai tinh qua **mask** (sigmoid), KHONG qua `(1-a)` truc tiep.
+`soft_mask_sum` dung STE: forward = hard count, backward = soft sum (qua sigmoid).
 
-### Resource loss
+### 2-Phase Scheduler
 
-```
-Tinh effective FLOPs cho moi Conv2d:
-- Regular conv:  flops_original * (1 - a_input) * (1 - a_output)
-- Depthwise:     flops_original * (1 - a_output)
-- Concat input:  weighted average retention theo so kenh
+- Phase 1 [0%, 80%): Progressive target tang dan `1-(1-final)^ratio`. Cho Taylor importance thoi gian tich luy.
+- Phase 2 [decay_ratio, 100%]: Fixed target, resource loss van ON (stabilize).
 
-effective_ratio = sum(effective_flops) / total_flops
-resource_loss = max(0, log(effective_ratio / target_ratio))
+### Gradient normalization (dms_grad_scale)
 
-total_loss = detection_loss + dms_lambda * resource_loss
-```
+Matching `DMSMutator.norm_gradient()` tu ICML 2024 repo.
+- **Van de**: detection gradient >> resource gradient tren `a` → can lambda lon (100~1000)
+- **Giai phap**: tu dong normalize flop grad L2 norm = task grad L2 norm (EMA tracking)
+- **Khi ON** (`dms_grad_scale >= 0`): auto balance, lambda khong anh huong gradient
+- **Khi OFF** (`dms_grad_scale=-1`): can lambda thu cong de can bang
+
+### Clamp
+
+- `a_min = 16/N`: moi layer giu toi thieu 16 channels (tranh bottleneck)
+- `a_max = 1 - 8/N`: dam bao ket qua chia het cho 8 (GPU alignment)
 
 ---
 
@@ -613,6 +575,12 @@ Moi method chi can implement cach tinh importance scores, con lai dung chung pip
 Dict `{bn_name: mask_tensor}` voi `mask_tensor` la binary tensor (0/1) co shape `[n_channels]`. Duoc dung boi:
 - `finetune`: de build DetectionModelPruned dung so kenh
 - `KD`: de align channels giua teacher va student
+
+### ignore_bn_list
+
+BN layers khong duoc prune (de bao ve residual connections):
+- Bottleneck co `add=True`: ignore cv2.bn + parent cv1.bn
+- PSABlock: ignore tat ca BN ben trong + parent cv1.bn
 
 ---
 
@@ -670,10 +638,3 @@ Khong can projection layer 1x1 vi ta biet chinh xac kenh nao cua teacher map san
   1. `kd_warmup=5`: epoch dau chi train detection loss (khong KD)
   2. Ramp up: sau warmup, `kd_lambda` tang dan tu 0 → full trong 5 epochs tiep
   3. Scaler on dinh truoc khi KD vao
-
-### Learnable temperature
-
-- `cwd_temperature="learnable"`: tu dong hoc tau bang gradient descent
-- `log_tau = nn.Parameter(log(tau_init))` → tau = exp(log_tau).clamp(0.5, 20)
-- Optimizer rieng: Adam, tach khoi main optimizer
-- Khong can grid search temperature
