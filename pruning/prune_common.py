@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 from ultralytics.utils import colorstr, LOGGER
 from ultralytics.nn.modules.block import Bottleneck, PSABlock
+from ultralytics.nn.modules.block_pruned import BottleneckPruned
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.nn.tasks_pruned import DetectionModelPruned
 warnings.filterwarnings('ignore')
@@ -69,7 +70,7 @@ def load_and_prepare(weights, cfg, model_size, layer_ratio_path=None):
     for name, module in model.model.named_modules():
         if isinstance(module, nn.BatchNorm2d):
             bn_dict[name] = module
-        if isinstance(module, Bottleneck) and not module.add:
+        if isinstance(module, (Bottleneck, BottleneckPruned)) and not module.add:
             chunk_bn = f"{name[:-4]}.cv1.bn"
             chunk_bn_list.append(chunk_bn)
 
@@ -90,7 +91,7 @@ def load_and_prepare(weights, cfg, model_size, layer_ratio_path=None):
 
     # Build pruned YAML
     print("\nStep 6: Tạo pruned model config...")
-    nc = model.model.nc
+    nc = getattr(model.model, 'nc', None) or model.model.yaml['nc']
     pruned_yaml = build_pruned_yaml(cfg, model_size, nc)
 
     print(f"  nc: {nc}, scale: {model_size}")
@@ -233,7 +234,17 @@ def finalize_pruning(model, maskbndict, pruned_yaml, ignore_bn_list,
 
     # ─── Step 9: Build pruned model ───
     print("\nStep 9: Build pruned model...")
-    pruned_model = DetectionModelPruned(maskbndict=maskbndict, cfg=pruned_yaml, ch=3).cuda()
+    # Extract cv1_split_sections from source model (needed for re-pruning pruned models)
+    source_splits = {}
+    for name, mod in model.model.named_modules():
+        if hasattr(mod, 'cv1_split_sections'):
+            source_splits[name] = list(mod.cv1_split_sections)
+    if source_splits:
+        print(f"  Detected pruned source model with {len(source_splits)} split sections")
+    pruned_model = DetectionModelPruned(
+        maskbndict=maskbndict, cfg=pruned_yaml, ch=3,
+        source_splits=source_splits or None
+    ).cuda()
     pruned_model.eval()
 
     # ─── Step 10: Copy weights ───
@@ -288,6 +299,9 @@ def _copy_weights(model, pruned_model, maskbndict, ignore_bn_list):
                     f"{xv} from 'current_to_prev' not in maskbndict"
 
     changed = []
+
+    # Module dict for parent lookup (needed for pruned model split sections)
+    modules_dict_org = dict(model.model.named_modules())
 
     # Patterns
     pattern_c3k_first = re.compile(
@@ -357,7 +371,16 @@ def _copy_weights(model, pruned_model, maskbndict, ignore_bn_list):
                         if f"{parent}.cv3.bn" not in maskbndict:
                             is_bottleneck_cv2 = True
                     if not is_bottleneck_cv2:
-                        in_channels_mask = in_channels_mask.chunk(2, 0)[1]
+                        # Get parent C3k2 module to find actual split sections
+                        parent_idx = current_bn_layer_name.split('.')[1]
+                        parent_mod = modules_dict_org.get(f"model.{parent_idx}")
+                        if parent_mod is not None and hasattr(parent_mod, 'cv1_split_sections'):
+                            # Pruned model: use actual (possibly unequal) split sections
+                            left_count = parent_mod.cv1_split_sections[0]
+                            in_channels_mask = in_channels_mask[left_count:]
+                        else:
+                            # Original model: equal halves via chunk
+                            in_channels_mask = in_channels_mask.chunk(2, 0)[1]
 
                 # SPPF cv2 dynamic n_param
                 sppf_match = sppf_cv2_pattern.fullmatch(name_org)

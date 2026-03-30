@@ -23,6 +23,11 @@ import torch.nn as nn
 from ultralytics.utils.ops import make_divisible
 from ultralytics.nn.modules.block import Bottleneck, PSABlock
 
+try:
+    from ultralytics.nn.modules.block_pruned import BottleneckPruned
+except ImportError:
+    BottleneckPruned = None
+
 
 # ============================================================================
 # PRUNING UTILITIES (shared by prune.py)
@@ -194,8 +199,9 @@ def build_ignore_bn_list(model):
         list: BN layer names to ignore
     """
     ignore = []
+    _bn_types = (Bottleneck,) if BottleneckPruned is None else (Bottleneck, BottleneckPruned)
     for k, m in model.named_modules():
-        if isinstance(m, Bottleneck):
+        if isinstance(m, _bn_types):
             if m.add:
                 ignore.append(k + '.cv2.bn')
                 parts = k.split('.')

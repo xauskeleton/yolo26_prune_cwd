@@ -32,7 +32,7 @@ class DetectionModelPruned(BaseModel):
     forward继承BaseModel
     """
 
-    def __init__(self, maskbndict, cfg, ch=3, nc=None, verbose=True):
+    def __init__(self, maskbndict, cfg, ch=3, nc=None, verbose=True, source_splits=None):
         """
         Initialize the YOLOv26 detection model with the given config and parameters.
 
@@ -42,15 +42,17 @@ class DetectionModelPruned(BaseModel):
             ch (int): Input channels (default: 3 for RGB)
             nc (int): Number of classes (optional, từ cfg nếu không có)
             verbose (bool): Print model info
+            source_splits (dict): cv1_split_sections from source pruned model (for re-pruning)
         """
         super().__init__()
         self.yaml = cfg
         # 注意这里一定要deepcopy一下cfg, 因为当模型剪枝过程全部结束时我们要把模型保存下来, 包括模型配置信息
         # 所以我们并不想改变模型配置信息, 如果改变, 当再次用配置信息去构建网络的时候就会出错
         self.model, self.save, self.current_to_prev = parse_model_pruned(
-            maskbndict, deepcopy(cfg), ch, verbose
+            maskbndict, deepcopy(cfg), ch, verbose, source_splits=source_splits
         )
-        self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict
+        self.nc = self.yaml['nc']
+        self.names = {i: f'{i}' for i in range(self.nc)}  # default names dict
         self.inplace = self.yaml.get('inplace', True)
 
         # Build strides
@@ -169,7 +171,25 @@ class DetectionModelPruned(BaseModel):
         return E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
 
-def parse_model_pruned(maskbndict, d, ch, verbose=True):
+def _split_mask(cv1_mask, base_name, source_splits):
+    """Split cv1 mask into [left, right] sections.
+
+    For re-pruning pruned models, uses actual split boundary from source model.
+    For first-time pruning, uses equal halves (matching original chunk(2) behavior).
+    """
+    if source_splits and base_name in source_splits:
+        boundary = source_splits[base_name][0]
+        return [
+            torch.sum(cv1_mask[:boundary]).int().item(),
+            torch.sum(cv1_mask[boundary:]).int().item()
+        ]
+    return [
+        torch.sum(cv1_mask.chunk(2, 0)[0]).int().item(),
+        torch.sum(cv1_mask.chunk(2, 0)[1]).int().item()
+    ]
+
+
+def parse_model_pruned(maskbndict, d, ch, verbose=True, source_splits=None):
     """
     Parse pruned model từ YAML config và pruning masks.
 
@@ -370,10 +390,7 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
             cv1out = torch.sum(cv1_mask).int().item()
 
             # Split sections
-            cv1_split_sections = [
-                torch.sum(cv1_mask.chunk(2, 0)[0]).int().item(),
-                torch.sum(cv1_mask.chunk(2, 0)[1]).int().item()
-            ]
+            cv1_split_sections = _split_mask(cv1_mask, base_name, source_splits)
 
             # Inner C3k modules - DETECT ĐỘNG số modules thực tế
             # Vì pruned model có thể có ít hơn n modules (ví dụ YAML n=3 nhưng chỉ có m.0)
@@ -509,10 +526,7 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
             cv1_mask = maskbndict[cv1_bn_name]
             cv1out = torch.sum(cv1_mask).int().item()
 
-            cv1_split_sections = [
-                torch.sum(cv1_mask.chunk(2, 0)[0]).int().item(),
-                torch.sum(cv1_mask.chunk(2, 0)[1]).int().item()
-            ]
+            cv1_split_sections = _split_mask(cv1_mask, base_name, source_splits)
 
             # Detect Bottleneck modules (chỉ có cv1, cv2 - không có cv3)
             bn_indices = []
@@ -586,10 +600,7 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
             cv1_mask = maskbndict[cv1_bn_name]   # mask = all ones
             cv1out = torch.sum(cv1_mask).int().item()
 
-            cv1_split_sections = [
-                torch.sum(cv1_mask.chunk(2, 0)[0]).int().item(),
-                torch.sum(cv1_mask.chunk(2, 0)[1]).int().item()
-            ]
+            cv1_split_sections = _split_mask(cv1_mask, base_name, source_splits)
 
             # Tìm Sequential(Bottleneck, PSABlock) blocks
             # Key: model.X.m.{j}.0.cv1.bn (Bottleneck tại vị trí j trong Sequential)
@@ -694,10 +705,7 @@ def parse_model_pruned(maskbndict, d, ch, verbose=True):
             cv1_mask = maskbndict[cv1_bn_name]
             cv1out = torch.sum(cv1_mask).int().item()
 
-            cv1_split_sections = [
-                torch.sum(cv1_mask.chunk(2, 0)[0]).int().item(),
-                torch.sum(cv1_mask.chunk(2, 0)[1]).int().item()
-            ]
+            cv1_split_sections = _split_mask(cv1_mask, base_name, source_splits)
 
             # cv2
             cv2_bn_name = base_name + '.cv2.bn'
