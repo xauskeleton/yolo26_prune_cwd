@@ -414,6 +414,54 @@ def _copy_weights(model, pruned_model, maskbndict, ignore_bn_list):
 
 
 # ============================================================================
+# ITERATIVE PRUNING: load pruned model → prune lại
+# ============================================================================
+
+def load_and_prepare_iterative(weights, cfg, model_size, layer_ratio_path=None):
+    """
+    Wrapper cho iterative pruning — gọi load_and_prepare() rồi bổ sung
+    ignore/chunk lists cho BottleneckPruned (model đã prune từ round trước).
+
+    Không ảnh hưởng model chưa prune (BottleneckPruned không tồn tại → skip).
+    """
+    model, bn_dict, ignore_bn_list, chunk_bn_list, layer_ratio_cfg, pruned_yaml = \
+        load_and_prepare(weights, cfg, model_size, layer_ratio_path)
+
+    from ultralytics.nn.modules.block_pruned import BottleneckPruned
+
+    added_ignore = 0
+    added_chunk = 0
+    for name, module in model.model.named_modules():
+        if isinstance(module, BottleneckPruned):
+            if module.add:
+                # Residual bottleneck: ignore cv2.bn + parent cv1.bn
+                bn_cv2 = name + '.cv2.bn'
+                if bn_cv2 in bn_dict and bn_cv2 not in ignore_bn_list:
+                    ignore_bn_list.append(bn_cv2)
+                    added_ignore += 1
+                parts = name.split('.')
+                if len(parts) >= 2 and parts[-2] == 'm':
+                    parent = name.rsplit(".", 2)[0]
+                    parent_bn = parent + ".cv1.bn"
+                    if parent_bn in bn_dict and parent_bn not in ignore_bn_list:
+                        ignore_bn_list.append(parent_bn)
+                        added_ignore += 1
+            else:
+                # Non-residual bottleneck: chunk constraint
+                chunk_bn = f"{name[:-4]}.cv1.bn"
+                if chunk_bn in bn_dict and chunk_bn not in chunk_bn_list:
+                    chunk_bn_list.append(chunk_bn)
+                    added_chunk += 1
+
+    if added_ignore or added_chunk:
+        prunable_count = len({k for k in bn_dict if k not in ignore_bn_list})
+        print(f"  [Iterative] BottleneckPruned: +{added_ignore} ignore, +{added_chunk} chunk")
+        print(f"  [Iterative] Prunable BN layers: {prunable_count}")
+
+    return model, bn_dict, ignore_bn_list, chunk_bn_list, layer_ratio_cfg, pruned_yaml
+
+
+# ============================================================================
 # UTILITIES
 # ============================================================================
 
