@@ -1,5 +1,5 @@
-"""
-Taylor Pruning (First-order Taylor Expansion)
+r"""
+Taylor Pruning (First-order Taylor Expansion).
 =============================================
 Pruning dựa trên first-order Taylor approximation.
 Importance score = |BN.gamma * grad(BN.gamma)| tích lũy qua calibration data.
@@ -35,20 +35,15 @@ import argparse
 
 import torch
 import torch.nn as nn
+from prune_common import add_common_args, create_masks, finalize_pruning, load_and_prepare
 
 from ultralytics.cfg import get_cfg
+from ultralytics.data import build_dataloader, build_yolo_dataset
 from ultralytics.data.utils import check_det_dataset
-from ultralytics.data import build_yolo_dataset, build_dataloader
-
-from prune_common import (
-    ROOT, load_and_prepare, create_masks, finalize_pruning, add_common_args
-)
 
 
 def _build_calibration_dataloader(data_yaml, imgsz, batch_size):
-    """
-    Build YOLO dataloader từ data.yaml cho calibration.
-    Dùng val set, mode="val" (không augmentation).
+    """Build YOLO dataloader từ data.yaml cho calibration. Dùng val set, mode="val" (không augmentation).
 
     Returns:
         dataloader: PyTorch DataLoader với labeled data
@@ -63,23 +58,11 @@ def _build_calibration_dataloader(data_yaml, imgsz, batch_size):
 
     # Build dataset từ val set, mode="val" để tắt augmentation
     dataset = build_yolo_dataset(
-        cfg=cfg,
-        img_path=data["val"],
-        batch=batch_size,
-        data=data,
-        mode="val",
-        rect=False,
-        stride=32
+        cfg=cfg, img_path=data["val"], batch=batch_size, data=data, mode="val", rect=False, stride=32
     )
 
     # Build dataloader
-    dataloader = build_dataloader(
-        dataset=dataset,
-        batch=batch_size,
-        workers=4,
-        shuffle=False,
-        rank=-1
-    )
+    dataloader = build_dataloader(dataset=dataset, batch=batch_size, workers=4, shuffle=False, rank=-1)
 
     print(f"  Dataset: {data['val']}")
     print(f"  Images: {len(dataset)}")
@@ -87,10 +70,8 @@ def _build_calibration_dataloader(data_yaml, imgsz, batch_size):
     return dataloader
 
 
-def compute_taylor_importance(model, bn_dict, ignore_bn_list,
-                              dataloader, num_batches, device='cuda'):
-    """
-    Tính Taylor importance = |gamma * grad_gamma| tích lũy qua real detection loss.
+def compute_taylor_importance(model, bn_dict, ignore_bn_list, dataloader, num_batches, device="cuda"):
+    """Tính Taylor importance = |gamma * grad_gamma| tích lũy qua real detection loss.
 
     Steps:
     1. Enable grad trên BN gamma
@@ -100,12 +81,12 @@ def compute_taylor_importance(model, bn_dict, ignore_bn_list,
     5. Tích lũy |gamma * grad_gamma| cho mỗi BN
 
     Args:
-        model:          AutoBackend model
-        bn_dict:        Dict[str, BN] - tất cả BN layers
+        model: AutoBackend model
+        bn_dict: Dict[str, BN] - tất cả BN layers
         ignore_bn_list: List[str] - BN to skip
-        dataloader:     YOLO DataLoader với labeled data
-        num_batches:    int - số batches calibration
-        device:         str - cuda or cpu
+        dataloader: YOLO DataLoader với labeled data
+        num_batches: int - số batches calibration
+        device: str - cuda or cpu
 
     Returns:
         Dict[str, Tensor] - Taylor importance per channel cho mỗi prunable BN
@@ -120,10 +101,11 @@ def compute_taylor_importance(model, bn_dict, ignore_bn_list,
     # Ensure model.args is namespace (criterion needs .box, .cls, .dfl attribute access)
     if isinstance(model.model.args, dict):
         from ultralytics.cfg import get_cfg
+
         model.model.args = get_cfg(model.model.args)
 
     # Initialize detection loss criterion (box + cls + dfl)
-    if getattr(model.model, 'criterion', None) is None:
+    if getattr(model.model, "criterion", None) is None:
         model.model.criterion = model.model.init_criterion()
 
     taylor_scores = {}
@@ -162,8 +144,7 @@ def compute_taylor_importance(model, bn_dict, ignore_bn_list,
         model.model.zero_grad()
 
         box_loss, cls_loss, dfl_loss = loss_items[0].item(), loss_items[1].item(), loss_items[2].item()
-        print(f"  Batch {batch_idx + 1}/{actual_batches} | "
-              f"box: {box_loss:.4f} cls: {cls_loss:.4f} dfl: {dfl_loss:.4f}")
+        print(f"  Batch {batch_idx + 1}/{actual_batches} | box: {box_loss:.4f} cls: {cls_loss:.4f} dfl: {dfl_loss:.4f}")
 
     # Average và move về CPU
     for name in taylor_scores:
@@ -172,39 +153,38 @@ def compute_taylor_importance(model, bn_dict, ignore_bn_list,
     # Move model về CPU để đồng bộ với pipeline copy weights
     model.model.cpu()
     model.model.eval()
-    print(f"  Taylor importance computed for {len(taylor_scores)} layers "
-          f"using {actual_batches} batches with real detection loss")
+    print(
+        f"  Taylor importance computed for {len(taylor_scores)} layers "
+        f"using {actual_batches} batches with real detection loss"
+    )
     return taylor_scores
 
 
 def main():
-    parser = argparse.ArgumentParser(description='YOLO26 Taylor Pruning')
+    parser = argparse.ArgumentParser(description="YOLO26 Taylor Pruning")
     add_common_args(parser)
 
     # Taylor-specific args
-    parser.add_argument('--data', type=str, required=True,
-                        help='YOLO data.yaml (dùng val set cho calibration)')
-    parser.add_argument('--num-batches', type=int, default=10,
-                        help='Số batches cho calibration (default: 10)')
-    parser.add_argument('--batch-size', type=int, default=4,
-                        help='Batch size cho calibration (default: 4)')
-    parser.add_argument('--imgsz', type=int, default=640,
-                        help='Image size cho calibration (default: 640)')
+    parser.add_argument("--data", type=str, required=True, help="YOLO data.yaml (dùng val set cho calibration)")
+    parser.add_argument("--num-batches", type=int, default=10, help="Số batches cho calibration (default: 10)")
+    parser.add_argument("--batch-size", type=int, default=4, help="Batch size cho calibration (default: 4)")
+    parser.add_argument("--imgsz", type=int, default=640, help="Image size cho calibration (default: 640)")
     opt = parser.parse_args()
 
-    print(f"\n{'='*100}")
-    print(f"TAYLOR PRUNING (real detection loss)")
+    print(f"\n{'=' * 100}")
+    print("TAYLOR PRUNING (real detection loss)")
     print(f"  Model:       {opt.weights}")
     print(f"  Prune ratio: {opt.prune_ratio}")
     print(f"  Divisor:     {opt.divisor}")
     print(f"  Data:        {opt.data}")
     print(f"  Batches:     {opt.num_batches} x {opt.batch_size}")
     print(f"  Image size:  {opt.imgsz}")
-    print(f"{'='*100}\n")
+    print(f"{'=' * 100}\n")
 
     # Step 1-6: Load and prepare
-    model, bn_dict, ignore_bn_list, chunk_bn_list, layer_ratio_cfg, pruned_yaml = \
-        load_and_prepare(opt.weights, opt.cfg, opt.model_size, opt.layer_ratio)
+    model, bn_dict, ignore_bn_list, _chunk_bn_list, layer_ratio_cfg, pruned_yaml = load_and_prepare(
+        opt.weights, opt.cfg, opt.model_size, opt.layer_ratio
+    )
 
     # Build YOLO dataloader với labeled data
     print("\nBuilding calibration dataloader...")
@@ -212,22 +192,25 @@ def main():
 
     # Compute Taylor importance với real detection loss
     print("\nComputing Taylor importance scores (real detection loss)...")
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     importance = compute_taylor_importance(
-        model, bn_dict, ignore_bn_list, dataloader,
-        num_batches=opt.num_batches, device=device
+        model, bn_dict, ignore_bn_list, dataloader, num_batches=opt.num_batches, device=device
     )
 
     # Step 7: Create masks
-    maskbndict = create_masks(
-        importance, model, ignore_bn_list, layer_ratio_cfg, opt.prune_ratio, opt.divisor
-    )
+    maskbndict = create_masks(importance, model, ignore_bn_list, layer_ratio_cfg, opt.prune_ratio, opt.divisor)
 
     # Steps 8-11: Build, copy, save
-    save_path = finalize_pruning(
-        model, maskbndict, pruned_yaml, ignore_bn_list,
-        opt.weights, opt.save_dir, opt.divisor, opt.prune_ratio,
-        method_name="taylor"
+    finalize_pruning(
+        model,
+        maskbndict,
+        pruned_yaml,
+        ignore_bn_list,
+        opt.weights,
+        opt.save_dir,
+        opt.divisor,
+        opt.prune_ratio,
+        method_name="taylor",
     )
 
     return maskbndict, pruned_yaml
