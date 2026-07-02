@@ -1,5 +1,5 @@
 """
-YOLOv26 LAMP Pruning (Layer-Adaptive Magnitude-based Pruning)
+YOLOv26 LAMP Pruning (Layer-Adaptive Magnitude-based Pruning).
 =============================================================
 Based on: Lee et al., "Layer-Adaptive Sparsity for the Magnitude-based Pruning", ICLR 2021
 
@@ -19,29 +19,23 @@ Usage:
     python prune_lamp.py --weights weights/yolo26m.pt --cfg cfg/yolo26m.yaml --model-size m --prune-ratio 0.5 --divisor 8
 """
 
-import re
+import argparse
 import os
+import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-
-import yaml
-import argparse
 
 import torch
 import torch.nn as nn
-from ultralytics.utils import colorstr, LOGGER
-from ultralytics.utils.ops import make_divisible
-from ultralytics.nn.modules.block import Bottleneck, PSABlock
+import yaml
+
 from ultralytics.nn.autobackend import AutoBackend
-from ultralytics.nn.modules import Conv, Concat
-
-from ultralytics.nn.modules.block_pruned import C3k2Pruned, C3k2PrunedBn, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
-from ultralytics.nn.modules.head_pruned import DetectPruned
+from ultralytics.nn.modules.block import Bottleneck
 from ultralytics.nn.tasks_pruned import DetectionModelPruned
+from ultralytics.utils import colorstr
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]
@@ -49,23 +43,21 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))
 
-from dms.dms_utils import make_divisible_channels, get_layer_ratio, build_pruned_yaml, build_ignore_bn_list
-
+from dms.dms_utils import build_ignore_bn_list, build_pruned_yaml, get_layer_ratio, make_divisible_channels
 
 # ============================================================================
 # LAMP SCORE COMPUTATION
 # ============================================================================
 
+
 def compute_lamp_scores(gamma_abs):
-    """
-    Tinh LAMP score cho 1 layer.
+    """Tinh LAMP score cho 1 layer.
 
     LAMP score cho channel i (sorted ascending theo magnitude):
         score(i) = |gamma_i|^2 / (sum_{j >= i} |gamma_j|^2)
 
-    Channels quan trong tuong doi trong layer → score cao.
-    Channels nho nhung trong layer cung nho → score van tuong doi cao
-    → layer do bi prune it hon.
+    Channels quan trong tuong doi trong layer → score cao. Channels nho nhung trong layer cung nho → score van tuong doi
+    cao → layer do bi prune it hon.
 
     Args:
         gamma_abs: |BN.gamma|, shape [C]
@@ -75,7 +67,7 @@ def compute_lamp_scores(gamma_abs):
     """
     sorted_vals, sorted_idx = torch.sort(gamma_abs)  # ascending
 
-    sq = sorted_vals ** 2
+    sq = sorted_vals**2
     # cumsum ascending: csum[i] = sq[0] + sq[1] + ... + sq[i]
     csum = sq.cumsum(dim=0)
     # sum tu vi tri i den cuoi = total - csum[i-1] = csum[-1] - csum[i] + sq[i]
@@ -92,8 +84,7 @@ def compute_lamp_scores(gamma_abs):
 
 
 def compute_all_lamp_scores(bn_dict, ignore_bn_list):
-    """
-    Tinh LAMP scores cho tat ca prunable BN layers.
+    """Tinh LAMP scores cho tat ca prunable BN layers.
 
     Args:
         bn_dict: {name: nn.BatchNorm2d}
@@ -112,8 +103,7 @@ def compute_all_lamp_scores(bn_dict, ignore_bn_list):
 
 
 def compute_lamp_masks(lamp_scores, bn_dict, prune_ratio, divisor, layer_ratio_cfg=None):
-    """
-    Tao masks tu LAMP scores bang global threshold.
+    """Tao masks tu LAMP scores bang global threshold.
 
     Algorithm:
     1. Pool tat ca LAMP scores thanh 1 list
@@ -121,7 +111,7 @@ def compute_lamp_masks(lamp_scores, bn_dict, prune_ratio, divisor, layer_ratio_c
     3. Apply threshold → per-layer masks
     4. Round channels den divisor per-layer
     5. Tao lai mask top-k theo BN gamma (khong phai LAMP score)
-       vi LAMP chi dung de phan bo ratio, mask cuoi cung van giu channels co gamma lon nhat
+    vi LAMP chi dung de phan bo ratio, mask cuoi cung van giu channels co gamma lon nhat
 
     Args:
         lamp_scores: {bn_name: tensor LAMP scores}
@@ -134,7 +124,7 @@ def compute_lamp_masks(lamp_scores, bn_dict, prune_ratio, divisor, layer_ratio_c
         masks: {bn_name: tensor mask shape [C]}
         layer_ratios: {bn_name: float actual ratio}
     """
-    # Layers co custom ratio → tach rieng, khong tham gia LAMP global
+    # Layers co custom ratio → tach rieng, khong than gia LAMP global
     custom_layers = set()
     if layer_ratio_cfg:
         for name in lamp_scores:
@@ -213,9 +203,9 @@ def compute_lamp_masks(lamp_scores, bn_dict, prune_ratio, divisor, layer_ratio_c
 # MAIN PRUNING FUNCTION
 # ============================================================================
 
+
 def main(opt):
-    """
-    LAMP pruning workflow
+    """LAMP pruning workflow.
 
     Steps:
     1. Collect BN layers va ignore list
@@ -229,7 +219,6 @@ def main(opt):
     10. Copy weights
     11. Save
     """
-
     # Parse options
     weights = opt.weights
     prune_ratio = opt.prune_ratio
@@ -240,20 +229,20 @@ def main(opt):
 
     # Load layer-wise custom ratios
     layer_ratio_cfg = {}
-    if hasattr(opt, 'layer_ratio') and opt.layer_ratio:
-        with open(opt.layer_ratio, encoding='utf-8') as f:
+    if hasattr(opt, "layer_ratio") and opt.layer_ratio:
+        with open(opt.layer_ratio, encoding="utf-8") as f:
             layer_ratio_cfg = yaml.safe_load(f) or {}
         print(f"  Loaded layer ratio config: {opt.layer_ratio} ({len(layer_ratio_cfg)} rules)")
 
-    print(f"\n{'='*100}")
-    print(f"LAMP PRUNING CONFIGURATION:")
+    print(f"\n{'=' * 100}")
+    print("LAMP PRUNING CONFIGURATION:")
     print(f"  Model:       {weights}")
     print(f"  Prune ratio: {prune_ratio}")
     print(f"  Divisor:     {divisor}")
-    print(f"  Method:      LAMP (Layer-Adaptive Magnitude-based Pruning)")
+    print("  Method:      LAMP (Layer-Adaptive Magnitude-based Pruning)")
     if layer_ratio_cfg:
         print(f"  Layer rules: {layer_ratio_cfg}")
-    print(f"{'='*100}\n")
+    print(f"{'=' * 100}\n")
 
     # Load model
     model = AutoBackend(weights, fuse=False)
@@ -301,7 +290,7 @@ def main(opt):
     # =========================================
     print("\nStep 3: Validate prune ratio...")
     print(f"  Prune ratio: {colorstr(f'{prune_ratio:.3f}')}")
-    print(f"  Mode: LAMP global (adaptive per-layer ratios)")
+    print("  Mode: LAMP global (adaptive per-layer ratios)")
 
     if prune_ratio >= 0.9:
         print(f"  WARNING: Prune ratio rat cao ({prune_ratio:.2f}), model co the mat accuracy nghiem trong!")
@@ -309,7 +298,7 @@ def main(opt):
         print(f"  INFO: Prune ratio cao ({prune_ratio:.2f}), nen fine-tune ky sau pruning")
 
     if layer_ratio_cfg:
-        print(f"  Layer-wise custom ratios (override LAMP):")
+        print("  Layer-wise custom ratios (override LAMP):")
         for rule_key, rule_ratio in layer_ratio_cfg.items():
             print(f"    {rule_key}: {float(rule_ratio):.3f}")
 
@@ -326,7 +315,7 @@ def main(opt):
     print(f"  end2end: {pruned_yaml.get('end2end', False)}")
     print(f"  Backbone layers: {len(pruned_yaml['backbone'])}")
     print(f"  Head layers: {len(pruned_yaml['head'])}")
-    for idx, (f, n, m, args) in enumerate(pruned_yaml['backbone'] + pruned_yaml['head']):
+    for idx, (f, n, m, args) in enumerate(pruned_yaml["backbone"] + pruned_yaml["head"]):
         print(f"    [{idx:>2}] n={n} {m:<20} args={args}")
 
     # =========================================
@@ -339,17 +328,19 @@ def main(opt):
 
     # Print LAMP score statistics
     all_lamp = torch.cat(list(lamp_scores.values()))
-    print(f"  LAMP scores: min={all_lamp.min():.6f}, max={all_lamp.max():.6f}, "
-          f"mean={all_lamp.mean():.6f}, median={all_lamp.median():.6f}")
+    print(
+        f"  LAMP scores: min={all_lamp.min():.6f}, max={all_lamp.max():.6f}, "
+        f"mean={all_lamp.mean():.6f}, median={all_lamp.median():.6f}"
+    )
 
     # 7.2: Compute masks tu LAMP scores
-    lamp_masks, layer_ratios = compute_lamp_masks(
-        lamp_scores, bn_dict, prune_ratio, divisor, layer_ratio_cfg
-    )
+    lamp_masks, layer_ratios = compute_lamp_masks(lamp_scores, bn_dict, prune_ratio, divisor, layer_ratio_cfg)
 
     # 7.3: Build maskbndict (bao gom ca ignored layers voi mask=1)
     print("\n" + "=" * 120)
-    print(f"{'Layer name':<35} | {'Origin':>6} | {'LAMP ratio':>10} | {'Keep':>6} | {'Rounded':>7} | {'Sparsity':>8} | {'Note'}")
+    print(
+        f"{'Layer name':<35} | {'Origin':>6} | {'LAMP ratio':>10} | {'Keep':>6} | {'Rounded':>7} | {'Sparsity':>8} | {'Note'}"
+    )
     print("=" * 120)
 
     maskbndict = {}
@@ -363,7 +354,9 @@ def main(opt):
         if name in ignore_bn_list:
             # Ignored layer → keep all channels
             maskbndict[name] = torch.ones(origin_channels)
-            print(f"{name:<35} | {origin_channels:>6} | {'  -':>10} | {'  -':>6} | {'  -':>7} | {'  -':>8} | SKIP (residual)")
+            print(
+                f"{name:<35} | {origin_channels:>6} | {'  -':>10} | {'  -':>6} | {'  -':>7} | {'  -':>8} | SKIP (residual)"
+            )
             continue
 
         mask = lamp_masks[name]
@@ -372,8 +365,7 @@ def main(opt):
 
         # Validate
         assert mask.sum() > 0, f"BN {name} khong co kenh nao!"
-        assert mask.sum() % divisor == 0, \
-            f"BN {name}: {mask.sum()} channels khong chia het cho {divisor}!"
+        assert mask.sum() % divisor == 0, f"BN {name}: {mask.sum()} channels khong chia het cho {divisor}!"
 
         # Apply mask to BN weights
         module.weight.data.mul_(mask)
@@ -398,9 +390,9 @@ def main(opt):
     # Print LAMP vs uniform comparison
     ratios = list(layer_ratios.values())
     if ratios:
-        print(f"\n  LAMP adaptive ratios:")
+        print("\n  LAMP adaptive ratios:")
         print(f"    Target global:  {prune_ratio:.3f}")
-        print(f"    Actual average: {sum(ratios)/len(ratios):.3f}")
+        print(f"    Actual average: {sum(ratios) / len(ratios):.3f}")
         print(f"    Min layer:      {min(ratios):.3f}")
         print(f"    Max layer:      {max(ratios):.3f}")
         print(f"    Std dev:        {torch.tensor(ratios).std():.3f}")
@@ -441,7 +433,7 @@ def main(opt):
     for xks, xvs in current_to_prev.items():
         xvs = [xvs] if not isinstance(xvs, list) else xvs
         for xk, xv in zip([xks] if not isinstance(xks, list) else xks, xvs):
-            assert xk in maskbndict.keys() or 'model.' in xk, f"{xk} from 'current_to_prev' not valid"
+            assert xk in maskbndict.keys() or "model." in xk, f"{xk} from 'current_to_prev' not valid"
             if xv is not None:
                 assert xv in maskbndict.keys(), f"{xv} from 'current_to_prev' not in maskbndict"
 
@@ -457,17 +449,22 @@ def main(opt):
     # Thu thap SPPF n_param dong
     sppf_n_params = {}
     for sppf_name, sppf_module in model.model.named_modules():
-        if hasattr(sppf_module, 'n') and hasattr(sppf_module, 'cv1') and hasattr(sppf_module, 'cv2') \
-                and hasattr(sppf_module, 'm') and isinstance(sppf_module.m, nn.MaxPool2d):
+        if (
+            hasattr(sppf_module, "n")
+            and hasattr(sppf_module, "cv1")
+            and hasattr(sppf_module, "cv2")
+            and hasattr(sppf_module, "m")
+            and isinstance(sppf_module.m, nn.MaxPool2d)
+        ):
             sppf_n_params[sppf_name] = sppf_module.n
     sppf_cv2_pattern = re.compile(r"model\.(\d+)\.cv2\.conv")
 
-    for (name_org, module_org), (name_pruned, module_pruned) in \
-        zip(model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)):
-
+    for (name_org, module_org), (name_pruned, module_pruned) in zip(
+        model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)
+    ):
         assert name_org == name_pruned, f"name mismatch: {name_org} != {name_pruned}"
 
-        if 'dfl' in name_org:
+        if "dfl" in name_org:
             continue
 
         # ─────────────────────────────────────
@@ -486,7 +483,7 @@ def main(opt):
         # Conv layers
         # ─────────────────────────────────────
         if isinstance(module_org, nn.Conv2d):
-            current_bn_layer_name = name_org[:-4] + 'bn'
+            current_bn_layer_name = name_org[:-4] + "bn"
 
             if current_bn_layer_name not in maskbndict:
                 continue
@@ -513,7 +510,7 @@ def main(opt):
                     is_bottleneck_cv2 = False
                     m_cv2 = re.fullmatch(r"model\.\d+\.m\.0\.cv2\.bn", current_bn_layer_name)
                     if m_cv2:
-                        parent = current_bn_layer_name.rsplit('.cv2.bn', 1)[0]
+                        parent = current_bn_layer_name.rsplit(".cv2.bn", 1)[0]
                         if f"{parent}.cv3.bn" not in maskbndict:
                             is_bottleneck_cv2 = True
                     if not is_bottleneck_cv2:
@@ -533,7 +530,7 @@ def main(opt):
             expected_out = out_channels_mask.sum().int().item()
 
             if expected_in != module_pruned.in_channels:
-                print(f"\n  SHAPE MISMATCH DETECTED:")
+                print("\n  SHAPE MISMATCH DETECTED:")
                 print(f"   Layer: {name_org}")
                 print(f"   Expected in_channels: {expected_in}")
                 print(f"   Actual in_channels:   {module_pruned.in_channels}")
@@ -594,9 +591,9 @@ def main(opt):
                 "prune_ratio": prune_ratio,
                 "method": "lamp",
                 "layer_ratios": layer_ratios,
-            }
+            },
         },
-        save_path
+        save_path,
     )
 
     print(f"   Model saved: {save_path}")
@@ -606,7 +603,7 @@ def main(opt):
     model_test = torch.load(save_path, weights_only=False)["model"].cuda()
     dummies = torch.randn([1, 3, 640, 640], dtype=torch.float32).cuda()
     with torch.no_grad():
-        output = model_test(dummies)
+        model_test(dummies)
     print("   Forward pass successful!")
 
     # Print summary
@@ -615,9 +612,8 @@ def main(opt):
     return maskbndict, pruned_yaml
 
 
-def print_summary(maskbndict: Dict, layer_ratios: Dict, divisor: int, prune_ratio: float, save_path: str):
-    """In tom tat ket qua LAMP pruning"""
-
+def print_summary(maskbndict: dict, layer_ratios: dict, divisor: int, prune_ratio: float, save_path: str):
+    """In tom tat ket qua LAMP pruning."""
     total_origin = 0
     total_pruned = 0
 
@@ -632,11 +628,11 @@ def print_summary(maskbndict: Dict, layer_ratios: Dict, divisor: int, prune_rati
     print("\n" + "=" * 100)
     print(" LAMP PRUNING SUMMARY")
     print("=" * 100)
-    print(f"Method:            LAMP (Layer-Adaptive Magnitude-based Pruning)")
+    print("Method:            LAMP (Layer-Adaptive Magnitude-based Pruning)")
     print(f"Divisor:           {divisor}")
     print(f"Target ratio:      {prune_ratio:.3f}")
     print(f"Total channels:    {total_origin:,} -> {total_pruned:,}")
-    print(f"Actual global:     {1 - total_pruned/total_origin:.3f}")
+    print(f"Actual global:     {1 - total_pruned / total_origin:.3f}")
     print(f"Compression:       {compression_ratio:.2f}x")
     if ratios:
         print(f"Layer ratio range: [{min(ratios):.3f}, {max(ratios):.3f}]")
@@ -647,36 +643,38 @@ def print_summary(maskbndict: Dict, layer_ratios: Dict, divisor: int, prune_rati
 
 
 def parse_opt():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='YOLO26 LAMP Pruning (Layer-Adaptive Magnitude-based Pruning)')
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="YOLO26 LAMP Pruning (Layer-Adaptive Magnitude-based Pruning)")
 
     # Basic options
-    parser.add_argument('--weights', type=str,
-                       default=ROOT / 'weights/best.pt',
-                       help='model.pt path')
-    parser.add_argument('--cfg', type=str,
-                       default=ROOT / 'ultralytics/cfg/models/26/yolo26.yaml',
-                       help='model.yaml path')
-    parser.add_argument('--model-size', type=str, default='m',
-                       choices=['n', 's', 'm', 'l', 'x'],
-                       help='model size')
+    parser.add_argument("--weights", type=str, default=ROOT / "weights/best.pt", help="model.pt path")
+    parser.add_argument(
+        "--cfg", type=str, default=ROOT / "ultralytics/cfg/models/26/yolo26.yaml", help="model.yaml path"
+    )
+    parser.add_argument("--model-size", type=str, default="m", choices=["n", "s", "m", "l", "x"], help="model size")
 
     # Pruning options
-    parser.add_argument('--prune-ratio', type=float, default=0.5,
-                       help='target prune ratio toan cuc (0.0-1.0). '
-                            'LAMP tu dong phan bo ratio khac nhau cho tung layer')
-    parser.add_argument('--layer-ratio', type=str, default=None,
-                       help='YAML file chua custom ratio (override LAMP cho layers cu the)')
+    parser.add_argument(
+        "--prune-ratio",
+        type=float,
+        default=0.5,
+        help="target prune ratio toan cuc (0.0-1.0). LAMP tu dong phan bo ratio khac nhau cho tongue layer",
+    )
+    parser.add_argument(
+        "--layer-ratio", type=str, default=None, help="YAML file chua custom ratio (override LAMP cho layers cu the)"
+    )
 
     # Divisibility options
-    parser.add_argument('--divisor', type=int, default=8,
-                       choices=[8, 16],
-                       help='divisor cho channels (8 cho GPU thuong, 16 cho Tensor Cores)')
+    parser.add_argument(
+        "--divisor",
+        type=int,
+        default=8,
+        choices=[8, 16],
+        help="divisor cho channels (8 cho GPU thuong, 16 cho Tensor Cores)",
+    )
 
     # Output options
-    parser.add_argument('--save-dir', type=str,
-                       default=ROOT / 'weights',
-                       help='pruned model save directory')
+    parser.add_argument("--save-dir", type=str, default=ROOT / "weights", help="pruned model save directory")
 
     opt = parser.parse_args()
     return opt
