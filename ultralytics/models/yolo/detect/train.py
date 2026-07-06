@@ -162,10 +162,14 @@ class DetectionTrainer(BaseTrainer):
         Returns:
             (DetectionModel): YOLO detection model.
         """
-        if getattr(self, 'finetune', False) and maskbndict is not None:
+        if getattr(self, "finetune", False) and maskbndict is not None:
             LOGGER.info("Finetune mode: building DetectionModelPruned with maskbndict")
             model = DetectionModelPruned(
-                maskbndict, cfg, ch=self.data["channels"], nc=self.data["nc"], verbose=verbose and RANK == -1,
+                maskbndict,
+                cfg,
+                ch=self.data["channels"],
+                nc=self.data["nc"],
+                verbose=verbose and RANK == -1,
             )
         else:
             model = DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
