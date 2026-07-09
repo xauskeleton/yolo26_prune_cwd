@@ -14,9 +14,11 @@ Usage:
 """
 
 import argparse
+from pathlib import Path
+
 import numpy as np
 import torch
-from pathlib import Path
+
 from ultralytics import YOLO
 from ultralytics.nn.autobackend import AutoBackend
 
@@ -101,24 +103,24 @@ def bench_tensorrt(model_path, imgsz, warmup, reps):
 # Fixed mAP values from validation results
 FIXED_DATA = {
     ("YOLO26n", "baseline"): {"params": 2.51, "size_mb": 5.2, "gflops": 5.8, "ap50": 84.76, "ap50_95": 65.82},
-    ("YOLO26n", "pruned"):   {"params": 1.8, "size_mb": 2.5, "gflops": 2.6, "ap50": 79.32, "ap50_95": 59.56},
+    ("YOLO26n", "pruned"): {"params": 1.8, "size_mb": 2.5, "gflops": 2.6, "ap50": 79.32, "ap50_95": 59.56},
     ("YOLO26s", "baseline"): {"params": 9.96, "size_mb": 19.4, "gflops": 22.6, "ap50": 87.06, "ap50_95": 69.73},
-    ("YOLO26s", "pruned"):   {"params": 4.4, "size_mb": 8.2, "gflops": 8.4, "ap50": 84.55, "ap50_95": 66.20},
+    ("YOLO26s", "pruned"): {"params": 4.4, "size_mb": 8.2, "gflops": 8.4, "ap50": 84.55, "ap50_95": 66.20},
     ("YOLO26m", "baseline"): {"params": 21.80, "size_mb": 42.1, "gflops": 74.9, "ap50": 89.04, "ap50_95": 72.49},
-    ("YOLO26m", "pruned"):   {"params": 7.50, "size_mb": 14.9, "gflops": 23.6, "ap50": 87.96, "ap50_95": 70.17},
+    ("YOLO26m", "pruned"): {"params": 7.50, "size_mb": 14.9, "gflops": 23.6, "ap50": 87.96, "ap50_95": 70.17},
     ("YOLO26l", "baseline"): {"params": 26.21, "size_mb": 50.6, "gflops": 93.3, "ap50": 89.59, "ap50_95": 73.70},
-    ("YOLO26l", "pruned"):   {"params": 9.70, "size_mb": 19.3, "gflops": 31.9, "ap50": 88.50, "ap50_95": 71.5},
+    ("YOLO26l", "pruned"): {"params": 9.70, "size_mb": 19.3, "gflops": 31.9, "ap50": 88.50, "ap50_95": 71.5},
 }
 
 MODELS = [
     ("YOLO26n", "baseline", "benchmark/n/baseline/yolo26n_baseline.pt"),
-    ("YOLO26n", "pruned",   "benchmark/n/bm/yolo26n_pruned_best.pt"),
+    ("YOLO26n", "pruned", "benchmark/n/bm/yolo26n_pruned_best.pt"),
     ("YOLO26s", "baseline", "benchmark/s/baseline/yolo26s_baseline.pt"),
-    ("YOLO26s", "pruned",   "benchmark/s/bm/yolo26s_pruned_best.pt"),
+    ("YOLO26s", "pruned", "benchmark/s/bm/yolo26s_pruned_best.pt"),
     ("YOLO26m", "baseline", "benchmark/m/baseline/yolo26m_baseline.pt"),
-    ("YOLO26m", "pruned",   "benchmark/m/bm/yolo26m_pruned_best.pt"),
+    ("YOLO26m", "pruned", "benchmark/m/bm/yolo26m_pruned_best.pt"),
     ("YOLO26l", "baseline", "benchmark/l/baseline/yolo26l_baseline.pt"),
-    ("YOLO26l", "pruned",   "benchmark/l/bm/yolo26l_pruned_best.pt"),
+    ("YOLO26l", "pruned", "benchmark/l/bm/yolo26l_pruned_best.pt"),
 ]
 
 
@@ -204,38 +206,44 @@ if __name__ == "__main__":
         print()
 
     # ===== COMBINED TABLE =====
-    print(f"\n{'='*140}")
-    hdr = (f"{'Model':<10} | {'Variant':<8} | {'Params':>7} | {'GFLOPs':>6} "
-           f"| {'PT ms':>7} | {'PT FPS':>7} "
-           f"| {'TRT ms':>7} | {'TRT FPS':>8} "
-           f"| {'Speedup':>7} "
-           f"| {'AP50':>6} | {'AP50-95':>7}")
+    print(f"\n{'=' * 140}")
+    hdr = (
+        f"{'Model':<10} | {'Variant':<8} | {'Params':>7} | {'GFLOPs':>6} "
+        f"| {'PT ms':>7} | {'PT FPS':>7} "
+        f"| {'TRT ms':>7} | {'TRT FPS':>8} "
+        f"| {'Speedup':>7} "
+        f"| {'AP50':>6} | {'AP50-95':>7}"
+    )
     print(hdr)
-    print(f"{'-'*140}")
+    print(f"{'-' * 140}")
 
     for r in results:
-        pt_lat = f"{r['pt_latency']:.2f}" if r['pt_latency'] else "N/A"
-        pt_fps = f"{r['pt_fps']:.1f}" if r['pt_fps'] else "N/A"
-        trt_lat = f"{r['trt_latency']:.2f}" if r['trt_latency'] else "N/A"
-        trt_fps = f"{r['trt_fps']:.1f}" if r['trt_fps'] else "N/A"
-        if r['pt_latency'] and r['trt_latency']:
+        pt_lat = f"{r['pt_latency']:.2f}" if r["pt_latency"] else "N/A"
+        pt_fps = f"{r['pt_fps']:.1f}" if r["pt_fps"] else "N/A"
+        trt_lat = f"{r['trt_latency']:.2f}" if r["trt_latency"] else "N/A"
+        trt_fps = f"{r['trt_fps']:.1f}" if r["trt_fps"] else "N/A"
+        if r["pt_latency"] and r["trt_latency"]:
             speedup = f"{r['pt_latency'] / r['trt_latency']:.2f}x"
         else:
             speedup = "N/A"
-        print(f"{r['model']:<10} | {r['variant']:<8} | {r['params']:>6.2f}M | {r['gflops']:>6.1f} "
-              f"| {pt_lat:>7} | {pt_fps:>7} "
-              f"| {trt_lat:>7} | {trt_fps:>8} "
-              f"| {speedup:>7} "
-              f"| {r['ap50']:>6.2f} | {r['ap50_95']:>7.2f}")
-    print(f"{'='*140}")
+        print(
+            f"{r['model']:<10} | {r['variant']:<8} | {r['params']:>6.2f}M | {r['gflops']:>6.1f} "
+            f"| {pt_lat:>7} | {pt_fps:>7} "
+            f"| {trt_lat:>7} | {trt_fps:>8} "
+            f"| {speedup:>7} "
+            f"| {r['ap50']:>6.2f} | {r['ap50_95']:>7.2f}"
+        )
+    print(f"{'=' * 140}")
 
     # ===== PRUNING SPEEDUP (baseline vs pruned, per size) =====
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("PRUNING SPEEDUP (baseline vs pruned)")
-    print(f"{'-'*100}")
-    print(f"{'Size':<10} | {'PT base':>8} | {'PT prune':>9} | {'PT speedup':>10} "
-          f"| {'TRT base':>9} | {'TRT prune':>10} | {'TRT speedup':>11}")
-    print(f"{'-'*100}")
+    print(f"{'-' * 100}")
+    print(
+        f"{'Size':<10} | {'PT base':>8} | {'PT prune':>9} | {'PT speedup':>10} "
+        f"| {'TRT base':>9} | {'TRT prune':>10} | {'TRT speedup':>11}"
+    )
+    print(f"{'-' * 100}")
 
     sizes = ["YOLO26n", "YOLO26s", "YOLO26m", "YOLO26l"]
     for size in sizes:
@@ -244,35 +252,38 @@ if __name__ == "__main__":
         if not base or not prun:
             continue
 
-        pt_b = f"{base['pt_latency']:.1f}ms" if base['pt_latency'] else "N/A"
-        pt_p = f"{prun['pt_latency']:.1f}ms" if prun['pt_latency'] else "N/A"
-        if base['pt_latency'] and prun['pt_latency']:
+        pt_b = f"{base['pt_latency']:.1f}ms" if base["pt_latency"] else "N/A"
+        pt_p = f"{prun['pt_latency']:.1f}ms" if prun["pt_latency"] else "N/A"
+        if base["pt_latency"] and prun["pt_latency"]:
             pt_sp = f"{base['pt_latency'] / prun['pt_latency']:.2f}x"
         else:
             pt_sp = "N/A"
 
-        trt_b = f"{base['trt_latency']:.1f}ms" if base['trt_latency'] else "N/A"
-        trt_p = f"{prun['trt_latency']:.1f}ms" if prun['trt_latency'] else "N/A"
-        if base['trt_latency'] and prun['trt_latency']:
+        trt_b = f"{base['trt_latency']:.1f}ms" if base["trt_latency"] else "N/A"
+        trt_p = f"{prun['trt_latency']:.1f}ms" if prun["trt_latency"] else "N/A"
+        if base["trt_latency"] and prun["trt_latency"]:
             trt_sp = f"{base['trt_latency'] / prun['trt_latency']:.2f}x"
         else:
             trt_sp = "N/A"
 
-        print(f"{size:<10} | {pt_b:>8} | {pt_p:>9} | {pt_sp:>10} "
-              f"| {trt_b:>9} | {trt_p:>10} | {trt_sp:>11}")
-    print(f"{'='*100}")
+        print(f"{size:<10} | {pt_b:>8} | {pt_p:>9} | {pt_sp:>10} | {trt_b:>9} | {trt_p:>10} | {trt_sp:>11}")
+    print(f"{'=' * 100}")
 
     # ===== CSV =====
     print("\n--- CSV ---")
-    print("Model,Variant,Params(M),Size(MB),GFLOPs,PT_Latency(ms),PT_FPS,TRT_Latency(ms),TRT_FPS,TRT_Speedup,AP50,AP50-95")
+    print(
+        "Model,Variant,Params(M),Size(MB),GFLOPs,PT_Latency(ms),PT_FPS,TRT_Latency(ms),TRT_FPS,TRT_Speedup,AP50,AP50-95"
+    )
     for r in results:
-        pt_l = f"{r['pt_latency']:.2f}" if r['pt_latency'] else ""
-        pt_f = f"{r['pt_fps']:.1f}" if r['pt_fps'] else ""
-        trt_l = f"{r['trt_latency']:.2f}" if r['trt_latency'] else ""
-        trt_f = f"{r['trt_fps']:.1f}" if r['trt_fps'] else ""
-        if r['pt_latency'] and r['trt_latency']:
+        pt_l = f"{r['pt_latency']:.2f}" if r["pt_latency"] else ""
+        pt_f = f"{r['pt_fps']:.1f}" if r["pt_fps"] else ""
+        trt_l = f"{r['trt_latency']:.2f}" if r["trt_latency"] else ""
+        trt_f = f"{r['trt_fps']:.1f}" if r["trt_fps"] else ""
+        if r["pt_latency"] and r["trt_latency"]:
             sp = f"{r['pt_latency'] / r['trt_latency']:.2f}"
         else:
             sp = ""
-        print(f"{r['model']},{r['variant']},{r['params']},{r['size_mb']},{r['gflops']},"
-              f"{pt_l},{pt_f},{trt_l},{trt_f},{sp},{r['ap50']},{r['ap50_95']}")
+        print(
+            f"{r['model']},{r['variant']},{r['params']},{r['size_mb']},{r['gflops']},"
+            f"{pt_l},{pt_f},{trt_l},{trt_f},{sp},{r['ap50']},{r['ap50_95']}"
+        )

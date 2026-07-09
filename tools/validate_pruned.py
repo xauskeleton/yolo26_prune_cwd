@@ -1,5 +1,5 @@
 """
-YOLOv26 Pruned Model Validation
+YOLOv26 Pruned Model Validation.
 ================================
 So sánh model gốc vs pruned: weight sanity, output consistency, mAP, visual check.
 
@@ -19,7 +19,6 @@ import os
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,17 +36,17 @@ if str(ROOT) not in sys.path:
 # 1. WEIGHT SANITY CHECK
 # ============================================================================
 
+
 def weight_sanity_check(model, model_name="model"):
-    """
-    Kiểm tra NaN/Inf và thống kê weight distribution cho mỗi layer.
+    """Kiểm tra NaN/Inf và thống kê weight distribution cho mỗi layer.
 
     Returns:
         bool: True nếu tất cả weights OK (không NaN/Inf)
         list[dict]: Thống kê cho mỗi layer
     """
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f" WEIGHT SANITY CHECK: {model_name}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     has_issue = False
     stats = []
@@ -74,11 +73,11 @@ def weight_sanity_check(model, model_name="model"):
         stats.append(layer_stat)
 
     if not has_issue:
-        print(f"  [OK] No NaN/Inf found in any parameter")
+        print("  [OK] No NaN/Inf found in any parameter")
 
     # Print top-level summary
     all_params = torch.cat([p.data.float().flatten() for p in model.parameters()])
-    print(f"\n  Overall weight stats:")
+    print("\n  Overall weight stats:")
     print(f"    Total params: {all_params.numel():,}")
     print(f"    Mean: {all_params.mean().item():.6f}")
     print(f"    Std:  {all_params.std().item():.6f}")
@@ -90,11 +89,11 @@ def weight_sanity_check(model, model_name="model"):
 
 def compare_weight_distributions(stats_orig, stats_pruned):
     """So sánh weight distribution giữa original và pruned model."""
-    print(f"\n{'='*80}")
-    print(f" WEIGHT DISTRIBUTION COMPARISON")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print(" WEIGHT DISTRIBUTION COMPARISON")
+    print(f"{'=' * 80}")
     print(f"{'Layer':<45} | {'Orig mean':>10} | {'Prun mean':>10} | {'Orig std':>10} | {'Prun std':>10}")
-    print(f"{'-'*45}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}")
+    print(f"{'-' * 45}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}")
 
     orig_by_name = {s["name"]: s for s in stats_orig}
     pruned_by_name = {s["name"]: s for s in stats_pruned}
@@ -127,7 +126,7 @@ def compare_weight_distributions(stats_orig, stats_pruned):
             )
 
     if anomaly_count == 0:
-        print(f"\n  [OK] No anomalous weight distributions detected")
+        print("\n  [OK] No anomalous weight distributions detected")
     else:
         print(f"\n  [WARN] {anomaly_count} layers with anomalous weight distributions")
 
@@ -136,17 +135,16 @@ def compare_weight_distributions(stats_orig, stats_pruned):
 # 2. OUTPUT CONSISTENCY CHECK
 # ============================================================================
 
+
 def output_consistency_check(model_orig, model_pruned, imgsz=640, device="cuda"):
-    """
-    So sánh output giữa original và pruned model.
-    Dùng random input, so sánh cosine similarity và MSE.
+    """So sánh output giữa original và pruned model. Dùng random input, so sánh cosine similarity và MSE.
 
     Returns:
         dict: Metrics (cosine_sim, mse, mae)
     """
-    print(f"\n{'='*80}")
-    print(f" OUTPUT CONSISTENCY CHECK")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print(" OUTPUT CONSISTENCY CHECK")
+    print(f"{'=' * 80}")
 
     model_orig.eval()
     model_pruned.eval()
@@ -189,27 +187,25 @@ def output_consistency_check(model_orig, model_pruned, imgsz=640, device="cuda")
     # Note: for aggressive pruning (>40%), cosine sim 0.5-0.8 is normal
     # The real quality metric is mAP, not raw output similarity
     if cos_sim > 0.9:
-        print(f"    [OK] Cosine similarity > 0.9 (excellent)")
+        print("    [OK] Cosine similarity > 0.9 (excellent)")
     elif cos_sim > 0.7:
-        print(f"    [OK] Cosine similarity > 0.7 (good for pruned model)")
+        print("    [OK] Cosine similarity > 0.7 (good for pruned model)")
     elif cos_sim > 0.5:
-        print(f"    [INFO] Cosine similarity > 0.5 (expected for aggressive pruning)")
-        print(f"    --> Run with --data to check actual mAP for real quality metric")
+        print("    [INFO] Cosine similarity > 0.5 (expected for aggressive pruning)")
+        print("    --> Run with --data to check actual mAP for real quality metric")
     else:
-        print(f"    [WARN] Cosine similarity < 0.5 (significant deviation)")
-        print(f"    --> Recommend running mAP evaluation with --data")
+        print("    [WARN] Cosine similarity < 0.5 (significant deviation)")
+        print("    --> Recommend running mAP evaluation with --data")
 
     return {"cosine_sim": cos_sim, "mse": mse, "mae": mae}
 
 
 def feature_map_comparison(model_orig, model_pruned, imgsz=640, device="cuda"):
+    """So sánh feature maps tại mỗi scale (P3, P4, P5) giữa 2 models. Hook vào backbone output layers.
     """
-    So sánh feature maps tại mỗi scale (P3, P4, P5) giữa 2 models.
-    Hook vào backbone output layers.
-    """
-    print(f"\n{'='*80}")
-    print(f" FEATURE MAP COMPARISON (per scale)")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print(" FEATURE MAP COMPARISON (per scale)")
+    print(f"{'=' * 80}")
 
     features_orig = {}
     features_pruned = {}
@@ -218,6 +214,7 @@ def feature_map_comparison(model_orig, model_pruned, imgsz=640, device="cuda"):
         def hook_fn(module, input, output):
             if isinstance(output, torch.Tensor):
                 store[name] = output.detach()
+
         return hook_fn
 
     # Hook vào các layer backbone/head output
@@ -228,7 +225,9 @@ def feature_map_comparison(model_orig, model_pruned, imgsz=640, device="cuda"):
             continue
         # Hook vào cuối mỗi C3k2/SPPF block
         for block_type in ["C3k2", "SPPF", "C2PSA"]:
-            if type(module).__name__.startswith(block_type) or type(module).__name__.startswith(block_type.replace("C3k2", "C3k2Pruned")):
+            if type(module).__name__.startswith(block_type) or type(module).__name__.startswith(
+                block_type.replace("C3k2", "C3k2Pruned")
+            ):
                 hooks.append(module.register_forward_hook(make_hook(features_orig, name)))
                 break
 
@@ -252,7 +251,7 @@ def feature_map_comparison(model_orig, model_pruned, imgsz=640, device="cuda"):
     #   - Spatial cosine: mean-pool across channels → compare HxW spatial maps
     #   - Activation stats: compare mean activation magnitudes
     print(f"\n  {'Layer':<25} | {'Orig shape':>20} | {'Pruned shape':>20} | {'Spatial cos':>11} | {'Act ratio':>9}")
-    print(f"  {'-'*25}-+-{'-'*20}-+-{'-'*20}-+-{'-'*11}-+-{'-'*9}")
+    print(f"  {'-' * 25}-+-{'-' * 20}-+-{'-' * 20}-+-{'-' * 11}-+-{'-' * 9}")
 
     orig_keys = sorted(features_orig.keys())
     pruned_keys = sorted(features_pruned.keys())
@@ -277,7 +276,7 @@ def feature_map_comparison(model_orig, model_pruned, imgsz=640, device="cuda"):
 
         short_name = ko if len(ko) <= 24 else "..." + ko[-21:]
         print(
-            f"  {short_name:<25} | {str(list(fo.shape)):>20} | {str(list(fp.shape)):>20} | "
+            f"  {short_name:<25} | {list(fo.shape)!s:>20} | {list(fp.shape)!s:>20} | "
             f"{spatial_cos:>11.4f} | {act_ratio:>9.4f}"
         )
 
@@ -286,9 +285,9 @@ def feature_map_comparison(model_orig, model_pruned, imgsz=640, device="cuda"):
 # 3. mAP EVALUATION
 # ============================================================================
 
+
 def evaluate_map(model_path, data_yaml, imgsz=640, batch=16, device="cuda"):
-    """
-    Chạy mAP evaluation dùng YOLO.val().
+    """Chạy mAP evaluation dùng YOLO.val().
 
     Args:
         model_path: Path tới model (.pt)
@@ -311,9 +310,9 @@ def evaluate_map(model_path, data_yaml, imgsz=640, batch=16, device="cuda"):
 
 def compare_map(weights, pruned, data_yaml, imgsz=640, batch=16, device="cuda"):
     """So sánh mAP giữa original và pruned model."""
-    print(f"\n{'='*80}")
-    print(f" mAP EVALUATION")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print(" mAP EVALUATION")
+    print(f"{'=' * 80}")
 
     print(f"\n  Evaluating original model: {weights}")
     metrics_orig = evaluate_map(weights, data_yaml, imgsz, batch, device)
@@ -325,9 +324,13 @@ def compare_map(weights, pruned, data_yaml, imgsz=640, batch=16, device="cuda"):
     map_drop = metrics_orig["map50_95"] - metrics_pruned["map50_95"]
 
     print(f"\n  {'Metric':<15} | {'Original':>10} | {'Pruned':>10} | {'Drop':>10}")
-    print(f"  {'-'*15}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}")
-    print(f"  {'mAP@0.5':<15} | {metrics_orig['map50']:>10.4f} | {metrics_pruned['map50']:>10.4f} | {map50_drop:>+10.4f}")
-    print(f"  {'mAP@0.5:0.95':<15} | {metrics_orig['map50_95']:>10.4f} | {metrics_pruned['map50_95']:>10.4f} | {map_drop:>+10.4f}")
+    print(f"  {'-' * 15}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}")
+    print(
+        f"  {'mAP@0.5':<15} | {metrics_orig['map50']:>10.4f} | {metrics_pruned['map50']:>10.4f} | {map50_drop:>+10.4f}"
+    )
+    print(
+        f"  {'mAP@0.5:0.95':<15} | {metrics_orig['map50_95']:>10.4f} | {metrics_pruned['map50_95']:>10.4f} | {map_drop:>+10.4f}"
+    )
 
     if map_drop < 0.05:
         print(f"\n  [OK] mAP drop < 5% ({map_drop:.4f})")
@@ -341,13 +344,12 @@ def compare_map(weights, pruned, data_yaml, imgsz=640, batch=16, device="cuda"):
 # 4. VISUAL CHECK
 # ============================================================================
 
+
 def visual_check(weights, pruned, img_path, imgsz=640, conf=0.25, save_dir="validate_results"):
-    """
-    Chạy inference trên 1 ảnh, vẽ bounding boxes, save kết quả.
-    """
-    print(f"\n{'='*80}")
+    """Chạy inference trên 1 ảnh, vẽ bounding boxes, save kết quả."""
+    print(f"\n{'=' * 80}")
     print(f" VISUAL CHECK: {img_path}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     os.makedirs(save_dir, exist_ok=True)
     img_name = Path(img_path).stem
@@ -360,6 +362,7 @@ def visual_check(weights, pruned, img_path, imgsz=640, conf=0.25, save_dir="vali
         img_orig = results_orig[0].plot()
         save_path_orig = os.path.join(save_dir, f"{img_name}_original.jpg")
         from PIL import Image
+
         Image.fromarray(img_orig[..., ::-1]).save(save_path_orig)
         n_orig = len(results_orig[0].boxes) if results_orig[0].boxes is not None else 0
         print(f"  Original: {n_orig} detections -> {save_path_orig}")
@@ -372,6 +375,7 @@ def visual_check(weights, pruned, img_path, imgsz=640, conf=0.25, save_dir="vali
         img_pruned = results_pruned[0].plot()
         save_path_pruned = os.path.join(save_dir, f"{img_name}_pruned.jpg")
         from PIL import Image
+
         Image.fromarray(img_pruned[..., ::-1]).save(save_path_pruned)
         n_pruned = len(results_pruned[0].boxes) if results_pruned[0].boxes is not None else 0
         print(f"  Pruned:   {n_pruned} detections -> {save_path_pruned}")
@@ -382,6 +386,7 @@ def visual_check(weights, pruned, img_path, imgsz=640, conf=0.25, save_dir="vali
 # ============================================================================
 # MAIN
 # ============================================================================
+
 
 def load_models(weights, pruned, device="cuda"):
     """Load original và pruned model."""
@@ -420,9 +425,9 @@ def main():
         print("CUDA not available, falling back to CPU")
         device = "cpu"
 
-    print(f"\n{'='*80}")
-    print(f" YOLOv26 PRUNED MODEL VALIDATION")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print(" YOLOv26 PRUNED MODEL VALIDATION")
+    print(f"{'=' * 80}")
     print(f"  Original: {opt.weights}")
     print(f"  Pruned:   {opt.pruned}")
     print(f"  Device:   {device}")
@@ -449,28 +454,28 @@ def main():
     if opt.data:
         compare_map(opt.weights, opt.pruned, opt.data, opt.imgsz, opt.batch, device)
     else:
-        print(f"\n  [SKIP] mAP evaluation (no --data provided)")
+        print("\n  [SKIP] mAP evaluation (no --data provided)")
 
     # --- 4. Visual Check (if image provided) ---
     if opt.img:
         visual_check(opt.weights, opt.pruned, opt.img, opt.imgsz, opt.conf, opt.save_dir)
     else:
-        print(f"\n  [SKIP] Visual check (no --img provided)")
+        print("\n  [SKIP] Visual check (no --img provided)")
 
     # --- Summary ---
-    print(f"\n{'='*80}")
-    print(f" VALIDATION SUMMARY")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print(" VALIDATION SUMMARY")
+    print(f"{'=' * 80}")
     print(f"  Weight sanity (original): {'PASS' if ok_orig else 'FAIL'}")
     print(f"  Weight sanity (pruned):   {'PASS' if ok_pruned else 'FAIL'}")
     print(f"  Cosine similarity:        {output_metrics['cosine_sim']:.6f}")
     print(f"  MSE:                      {output_metrics['mse']:.6f}")
     print(f"  MAE:                      {output_metrics['mae']:.6f}")
     if opt.data:
-        print(f"  mAP: see above")
+        print("  mAP: see above")
     if opt.img:
         print(f"  Visual results: {opt.save_dir}/")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
 
 if __name__ == "__main__":

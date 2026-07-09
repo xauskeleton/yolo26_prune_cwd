@@ -1,5 +1,5 @@
 """
-YOLOv26 FPGM Pruning (Filter Pruning via Geometric Median)
+YOLOv26 FPGM Pruning (Filter Pruning via Geometric Median).
 ===========================================================
 Based on: He et al., "Filter Pruning via Geometric Median for Deep Convolutional
 Neural Networks Acceleration", CVPR 2019
@@ -31,29 +31,23 @@ Usage:
     python prune_fpgm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3 --global-threshold
 """
 
-import re
+import argparse
 import os
+import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-
-import yaml
-import argparse
 
 import torch
 import torch.nn as nn
-from ultralytics.utils import colorstr, LOGGER
-from ultralytics.utils.ops import make_divisible
-from ultralytics.nn.modules.block import Bottleneck, PSABlock
+import yaml
+
 from ultralytics.nn.autobackend import AutoBackend
-from ultralytics.nn.modules import Conv, Concat
-
-from ultralytics.nn.modules.block_pruned import C3k2Pruned, C3k2PrunedBn, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
-from ultralytics.nn.modules.head_pruned import DetectPruned
+from ultralytics.nn.modules.block import Bottleneck
 from ultralytics.nn.tasks_pruned import DetectionModelPruned
+from ultralytics.utils import colorstr
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]
@@ -61,20 +55,18 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))
 
-from dms.dms_utils import make_divisible_channels, get_layer_ratio, build_pruned_yaml, build_ignore_bn_list
-
+from dms.dms_utils import build_ignore_bn_list, build_pruned_yaml, get_layer_ratio, make_divisible_channels
 
 # ============================================================================
 # FPGM SCORE COMPUTATION
 # ============================================================================
 
-def geometric_median(points, max_iter=100, tol=1e-6):
-    """
-    Tinh geometric median bang Weiszfeld's algorithm.
 
-    Geometric median = argmin_x sum_i ||x - p_i||_2
-    Khac voi mean (minimize sum of squared distances), geometric median minimize
-    sum of Euclidean distances → robust hon voi outliers.
+def geometric_median(points, max_iter=100, tol=1e-6):
+    """Tinh geometric median bang Weiszfeld's algorithm.
+
+    Geometric median = argmin_x sum_i ||x - p_i||_2 Khac voi mean (minimize sum of squared distances), geometric median
+    minimize sum of Euclidean distances → robust hon voi outliers.
 
     Weiszfeld update:
         x_{t+1} = sum(w_i * p_i) / sum(w_i)
@@ -115,11 +107,10 @@ def geometric_median(points, max_iter=100, tol=1e-6):
 
 
 def compute_fpgm_scores_for_conv(conv_weight):
-    """
-    Tinh FPGM score (khoang cach den geometric median) cho 1 Conv layer.
+    """Tinh FPGM score (khoang cach den geometric median) cho 1 Conv layer.
 
-    Score cao = filter xa geometric median = unique = QUAN TRONG → giu lai
-    Score thap = filter gan geometric median = redundant = CO THE PRUNE
+    Score cao = filter xa geometric median = unique = QUAN TRONG → giu lai Score thap = filter gan geometric median =
+    redundant = CO THE PRUNE
 
     Args:
         conv_weight: tensor shape [C_out, C_in, kH, kW]
@@ -146,11 +137,10 @@ def compute_fpgm_scores_for_conv(conv_weight):
 
 
 def compute_all_fpgm_scores(model, bn_dict, ignore_bn_list):
-    """
-    Tinh FPGM scores cho tat ca prunable BN layers.
+    """Tinh FPGM scores cho tat ca prunable BN layers.
 
-    Map moi BN → Conv tuong ung (bn_name[:-2] + 'conv') → tinh FPGM score
-    tu Conv weights. Ket qua: score per output channel (tuong ung BN channel).
+    Map moi BN → Conv tuong ung (bn_name[:-2] + 'conv') → tinh FPGM score tu Conv weights. Ket qua: score per output
+    channel (tuong ung BN channel).
 
     Args:
         model: original model
@@ -165,7 +155,7 @@ def compute_all_fpgm_scores(model, bn_dict, ignore_bn_list):
     for name, module in model.named_modules():
         if isinstance(module, nn.Conv2d):
             # Conv name 'model.X.cv1.conv' → BN name 'model.X.cv1.bn'
-            bn_name = name[:-4] + 'bn'
+            bn_name = name[:-4] + "bn"
             conv_dict[bn_name] = module
 
     fpgm_scores = {}
@@ -186,11 +176,9 @@ def compute_all_fpgm_scores(model, bn_dict, ignore_bn_list):
 
 
 def compute_fpgm_masks_perlayer(fpgm_scores, bn_dict, prune_ratio, divisor, layer_ratio_cfg=None):
-    """
-    Tao masks tu FPGM scores voi per-layer ratio (giong prune.py).
+    """Tao masks tu FPGM scores voi per-layer ratio (giong prune.py).
 
-    Moi layer prune theo cung ratio, nhung filter duoc chon dua tren
-    FPGM score thay vi BN gamma.
+    Moi layer prune theo cung ratio, nhung filter duoc chon dua tren FPGM score thay vi BN gamma.
 
     Args:
         fpgm_scores: {bn_name: tensor FPGM scores}
@@ -229,14 +217,12 @@ def compute_fpgm_masks_perlayer(fpgm_scores, bn_dict, prune_ratio, divisor, laye
 
 
 def compute_fpgm_masks_global(fpgm_scores, bn_dict, prune_ratio, divisor, layer_ratio_cfg=None):
-    """
-    Tao masks tu FPGM scores voi global threshold (giong LAMP).
+    """Tao masks tu FPGM scores voi global threshold (giong LAMP).
 
-    Pool tat ca FPGM scores (normalized per-layer) thanh 1 list,
-    tim global threshold → adaptive per-layer ratios.
+    Pool tat ca FPGM scores (normalized per-layer) thanh 1 list, tim global threshold → adaptive per-layer ratios.
 
-    Normalization quan trong vi FPGM scores co scale khac nhau giua cac layers
-    (Conv 3x3 co filter lon hon Conv 1x1 → distances lon hon).
+    Normalization quan trong vi FPGM scores co scale khac nhau giua cac layers (Conv 3x3 co filter lon hon Conv 1x1 →
+    distances lon hon).
 
     Args:
         fpgm_scores: {bn_name: tensor FPGM scores}
@@ -289,7 +275,7 @@ def compute_fpgm_masks_global(fpgm_scores, bn_dict, prune_ratio, divisor, layer_
         if 0 < n_prune < n_total:
             global_threshold = sorted_scores[n_prune].item()
         else:
-            global_threshold = float('-inf')
+            global_threshold = float("-inf")
 
     # Compute per-layer prune counts tu global threshold
     layer_prune_count = {}
@@ -331,9 +317,9 @@ def compute_fpgm_masks_global(fpgm_scores, bn_dict, prune_ratio, divisor, layer_
 # MAIN PRUNING FUNCTION
 # ============================================================================
 
+
 def main(opt):
-    """
-    FPGM pruning workflow
+    """FPGM pruning workflow.
 
     Steps:
     1. Collect BN layers va ignore list
@@ -346,7 +332,6 @@ def main(opt):
     10. Copy weights
     11. Save
     """
-
     # Parse options
     weights = opt.weights
     prune_ratio = opt.prune_ratio
@@ -358,21 +343,21 @@ def main(opt):
 
     # Load layer-wise custom ratios
     layer_ratio_cfg = {}
-    if hasattr(opt, 'layer_ratio') and opt.layer_ratio:
-        with open(opt.layer_ratio, encoding='utf-8') as f:
+    if hasattr(opt, "layer_ratio") and opt.layer_ratio:
+        with open(opt.layer_ratio, encoding="utf-8") as f:
             layer_ratio_cfg = yaml.safe_load(f) or {}
         print(f"  Loaded layer ratio config: {opt.layer_ratio} ({len(layer_ratio_cfg)} rules)")
 
-    print(f"\n{'='*100}")
-    print(f"FPGM PRUNING CONFIGURATION:")
+    print(f"\n{'=' * 100}")
+    print("FPGM PRUNING CONFIGURATION:")
     print(f"  Model:       {weights}")
     print(f"  Prune ratio: {prune_ratio}")
     print(f"  Divisor:     {divisor}")
-    print(f"  Method:      FPGM (Filter Pruning via Geometric Median)")
+    print("  Method:      FPGM (Filter Pruning via Geometric Median)")
     print(f"  Mode:        {'global threshold (adaptive per-layer)' if use_global else 'per-layer (uniform ratio)'}")
     if layer_ratio_cfg:
         print(f"  Layer rules: {layer_ratio_cfg}")
-    print(f"{'='*100}\n")
+    print(f"{'=' * 100}\n")
 
     # Load model
     model = AutoBackend(weights, fuse=False)
@@ -429,7 +414,7 @@ def main(opt):
         print(f"  INFO: Prune ratio cao ({prune_ratio:.2f}), nen fine-tune ky sau pruning")
 
     if layer_ratio_cfg:
-        print(f"  Layer-wise custom ratios:")
+        print("  Layer-wise custom ratios:")
         for rule_key, rule_ratio in layer_ratio_cfg.items():
             print(f"    {rule_key}: {float(rule_ratio):.3f}")
 
@@ -446,7 +431,7 @@ def main(opt):
     print(f"  end2end: {pruned_yaml.get('end2end', False)}")
     print(f"  Backbone layers: {len(pruned_yaml['backbone'])}")
     print(f"  Head layers: {len(pruned_yaml['head'])}")
-    for idx, (f, n, m, args) in enumerate(pruned_yaml['backbone'] + pruned_yaml['head']):
+    for idx, (f, n, m, args) in enumerate(pruned_yaml["backbone"] + pruned_yaml["head"]):
         print(f"    [{idx:>2}] n={n} {m:<20} args={args}")
 
     # =========================================
@@ -459,8 +444,10 @@ def main(opt):
 
     # Print FPGM score statistics
     all_fpgm = torch.cat(list(fpgm_scores.values()))
-    print(f"  FPGM scores: min={all_fpgm.min():.6f}, max={all_fpgm.max():.6f}, "
-          f"mean={all_fpgm.mean():.6f}, median={all_fpgm.median():.6f}")
+    print(
+        f"  FPGM scores: min={all_fpgm.min():.6f}, max={all_fpgm.max():.6f}, "
+        f"mean={all_fpgm.mean():.6f}, median={all_fpgm.median():.6f}"
+    )
 
     # 7.2: Compute masks
     if use_global:
@@ -474,7 +461,9 @@ def main(opt):
 
     # 7.3: Build maskbndict (bao gom ca ignored layers voi mask=1)
     print("\n" + "=" * 120)
-    print(f"{'Layer name':<35} | {'Origin':>6} | {'FPGM ratio':>10} | {'Keep':>6} | {'Rounded':>7} | {'Sparsity':>8} | {'Note'}")
+    print(
+        f"{'Layer name':<35} | {'Origin':>6} | {'FPGM ratio':>10} | {'Keep':>6} | {'Rounded':>7} | {'Sparsity':>8} | {'Note'}"
+    )
     print("=" * 120)
 
     maskbndict = {}
@@ -487,7 +476,9 @@ def main(opt):
 
         if name in ignore_bn_list:
             maskbndict[name] = torch.ones(origin_channels)
-            print(f"{name:<35} | {origin_channels:>6} | {'  -':>10} | {'  -':>6} | {'  -':>7} | {'  -':>8} | SKIP (residual)")
+            print(
+                f"{name:<35} | {origin_channels:>6} | {'  -':>10} | {'  -':>6} | {'  -':>7} | {'  -':>8} | SKIP (residual)"
+            )
             continue
 
         mask = fpgm_masks[name]
@@ -496,8 +487,7 @@ def main(opt):
 
         # Validate
         assert mask.sum() > 0, f"BN {name} khong co kenh nao!"
-        assert mask.sum() % divisor == 0, \
-            f"BN {name}: {mask.sum()} channels khong chia het cho {divisor}!"
+        assert mask.sum() % divisor == 0, f"BN {name}: {mask.sum()} channels khong chia het cho {divisor}!"
 
         # Apply mask to BN weights (zero out pruned channels)
         module.weight.data.mul_(mask)
@@ -524,7 +514,7 @@ def main(opt):
     if ratios:
         print(f"\n  FPGM {'adaptive' if use_global else 'uniform'} ratios:")
         print(f"    Target global:  {prune_ratio:.3f}")
-        print(f"    Actual average: {sum(ratios)/len(ratios):.3f}")
+        print(f"    Actual average: {sum(ratios) / len(ratios):.3f}")
         print(f"    Min layer:      {min(ratios):.3f}")
         print(f"    Max layer:      {max(ratios):.3f}")
         print(f"    Std dev:        {torch.tensor(ratios).std():.3f}")
@@ -565,7 +555,7 @@ def main(opt):
     for xks, xvs in current_to_prev.items():
         xvs = [xvs] if not isinstance(xvs, list) else xvs
         for xk, xv in zip([xks] if not isinstance(xks, list) else xks, xvs):
-            assert xk in maskbndict.keys() or 'model.' in xk, f"{xk} from 'current_to_prev' not valid"
+            assert xk in maskbndict.keys() or "model." in xk, f"{xk} from 'current_to_prev' not valid"
             if xv is not None:
                 assert xv in maskbndict.keys(), f"{xv} from 'current_to_prev' not in maskbndict"
 
@@ -581,17 +571,22 @@ def main(opt):
     # Thu thap SPPF n_param dong
     sppf_n_params = {}
     for sppf_name, sppf_module in model.model.named_modules():
-        if hasattr(sppf_module, 'n') and hasattr(sppf_module, 'cv1') and hasattr(sppf_module, 'cv2') \
-                and hasattr(sppf_module, 'm') and isinstance(sppf_module.m, nn.MaxPool2d):
+        if (
+            hasattr(sppf_module, "n")
+            and hasattr(sppf_module, "cv1")
+            and hasattr(sppf_module, "cv2")
+            and hasattr(sppf_module, "m")
+            and isinstance(sppf_module.m, nn.MaxPool2d)
+        ):
             sppf_n_params[sppf_name] = sppf_module.n
     sppf_cv2_pattern = re.compile(r"model\.(\d+)\.cv2\.conv")
 
-    for (name_org, module_org), (name_pruned, module_pruned) in \
-        zip(model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)):
-
+    for (name_org, module_org), (name_pruned, module_pruned) in zip(
+        model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)
+    ):
         assert name_org == name_pruned, f"name mismatch: {name_org} != {name_pruned}"
 
-        if 'dfl' in name_org:
+        if "dfl" in name_org:
             continue
 
         # ─────────────────────────────────────
@@ -610,7 +605,7 @@ def main(opt):
         # Conv layers
         # ─────────────────────────────────────
         if isinstance(module_org, nn.Conv2d):
-            current_bn_layer_name = name_org[:-4] + 'bn'
+            current_bn_layer_name = name_org[:-4] + "bn"
 
             if current_bn_layer_name not in maskbndict:
                 continue
@@ -637,7 +632,7 @@ def main(opt):
                     is_bottleneck_cv2 = False
                     m_cv2 = re.fullmatch(r"model\.\d+\.m\.0\.cv2\.bn", current_bn_layer_name)
                     if m_cv2:
-                        parent = current_bn_layer_name.rsplit('.cv2.bn', 1)[0]
+                        parent = current_bn_layer_name.rsplit(".cv2.bn", 1)[0]
                         if f"{parent}.cv3.bn" not in maskbndict:
                             is_bottleneck_cv2 = True
                     if not is_bottleneck_cv2:
@@ -657,7 +652,7 @@ def main(opt):
             expected_out = out_channels_mask.sum().int().item()
 
             if expected_in != module_pruned.in_channels:
-                print(f"\n  SHAPE MISMATCH DETECTED:")
+                print("\n  SHAPE MISMATCH DETECTED:")
                 print(f"   Layer: {name_org}")
                 print(f"   Expected in_channels: {expected_in}")
                 print(f"   Actual in_channels:   {module_pruned.in_channels}")
@@ -719,9 +714,9 @@ def main(opt):
                 "prune_ratio": prune_ratio,
                 "method": "fpgm_global" if use_global else "fpgm",
                 "layer_ratios": layer_ratios,
-            }
+            },
         },
-        save_path
+        save_path,
     )
 
     print(f"   Model saved: {save_path}")
@@ -731,7 +726,7 @@ def main(opt):
     model_test = torch.load(save_path, weights_only=False)["model"].cuda()
     dummies = torch.randn([1, 3, 640, 640], dtype=torch.float32).cuda()
     with torch.no_grad():
-        output = model_test(dummies)
+        model_test(dummies)
     print("   Forward pass successful!")
 
     # Print summary
@@ -740,10 +735,10 @@ def main(opt):
     return maskbndict, pruned_yaml
 
 
-def print_summary(maskbndict: Dict, layer_ratios: Dict, divisor: int,
-                   prune_ratio: float, save_path: str, use_global: bool):
-    """In tom tat ket qua FPGM pruning"""
-
+def print_summary(
+    maskbndict: dict, layer_ratios: dict, divisor: int, prune_ratio: float, save_path: str, use_global: bool
+):
+    """In tom tat ket qua FPGM pruning."""
     total_origin = 0
     total_pruned = 0
 
@@ -758,12 +753,12 @@ def print_summary(maskbndict: Dict, layer_ratios: Dict, divisor: int,
     print("\n" + "=" * 100)
     print(" FPGM PRUNING SUMMARY")
     print("=" * 100)
-    print(f"Method:            FPGM (Filter Pruning via Geometric Median)")
+    print("Method:            FPGM (Filter Pruning via Geometric Median)")
     print(f"Mode:              {'global threshold' if use_global else 'per-layer ratio'}")
     print(f"Divisor:           {divisor}")
     print(f"Target ratio:      {prune_ratio:.3f}")
     print(f"Total channels:    {total_origin:,} -> {total_pruned:,}")
-    print(f"Actual global:     {1 - total_pruned/total_origin:.3f}")
+    print(f"Actual global:     {1 - total_pruned / total_origin:.3f}")
     print(f"Compression:       {compression_ratio:.2f}x")
     if ratios:
         print(f"Layer ratio range: [{min(ratios):.3f}, {max(ratios):.3f}]")
@@ -774,39 +769,38 @@ def print_summary(maskbndict: Dict, layer_ratios: Dict, divisor: int,
 
 
 def parse_opt():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='YOLO26 FPGM Pruning (Filter Pruning via Geometric Median)')
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="YOLO26 FPGM Pruning (Filter Pruning via Geometric Median)")
 
     # Basic options
-    parser.add_argument('--weights', type=str,
-                       default=ROOT / 'weights/best.pt',
-                       help='model.pt path')
-    parser.add_argument('--cfg', type=str,
-                       default=ROOT / 'ultralytics/cfg/models/26/yolo26.yaml',
-                       help='model.yaml path')
-    parser.add_argument('--model-size', type=str, default='m',
-                       choices=['n', 's', 'm', 'l', 'x'],
-                       help='model size')
+    parser.add_argument("--weights", type=str, default=ROOT / "weights/best.pt", help="model.pt path")
+    parser.add_argument(
+        "--cfg", type=str, default=ROOT / "ultralytics/cfg/models/26/yolo26.yaml", help="model.yaml path"
+    )
+    parser.add_argument("--model-size", type=str, default="m", choices=["n", "s", "m", "l", "x"], help="model size")
 
     # Pruning options
-    parser.add_argument('--prune-ratio', type=float, default=0.5,
-                       help='target prune ratio toan cuc (0.0-1.0)')
-    parser.add_argument('--layer-ratio', type=str, default=None,
-                       help='YAML file chua custom ratio cho tung layer')
-    parser.add_argument('--global-threshold', action='store_true',
-                       help='dung global threshold (adaptive per-layer) thay vi per-layer ratio. '
-                            'Mac dinh: per-layer (moi layer prune cung ratio). '
-                            'Global: layers co nhieu redundant filters bi prune nhieu hon.')
+    parser.add_argument("--prune-ratio", type=float, default=0.5, help="target prune ratio toan cuc (0.0-1.0)")
+    parser.add_argument("--layer-ratio", type=str, default=None, help="YAML file chua custom ratio cho tongue layer")
+    parser.add_argument(
+        "--global-threshold",
+        action="store_true",
+        help="dung global threshold (adaptive per-layer) thay vi per-layer ratio. "
+        "Mac dinh: per-layer (moi layer prune cung ratio). "
+        "Global: layers co nhieu redundant filters bi prune nhieu hon.",
+    )
 
     # Divisibility options
-    parser.add_argument('--divisor', type=int, default=8,
-                       choices=[8, 16],
-                       help='divisor cho channels (8 cho GPU thuong, 16 cho Tensor Cores)')
+    parser.add_argument(
+        "--divisor",
+        type=int,
+        default=8,
+        choices=[8, 16],
+        help="divisor cho channels (8 cho GPU thuong, 16 cho Tensor Cores)",
+    )
 
     # Output options
-    parser.add_argument('--save-dir', type=str,
-                       default=ROOT / 'weights',
-                       help='pruned model save directory')
+    parser.add_argument("--save-dir", type=str, default=ROOT / "weights", help="pruned model save directory")
 
     opt = parser.parse_args()
     return opt
