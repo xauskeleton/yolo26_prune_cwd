@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.data import build_dataloader, build_yolo_dataset
 from ultralytics.engine.trainer import BaseTrainer
@@ -146,7 +146,7 @@ class DetectionTrainer(BaseTrainer):
         self.model.nc = self.data["nc"]  # attach number of classes to model
         self.model.names = self.data["names"]  # attach class names to model
         self.model.args = self.args  # attach hyperparameters to model
-        if getattr(self.model, "end2end"):
+        if self.model.end2end:
             self.model.set_head_attr(max_det=self.args.max_det)
         # TODO: self.model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc
 
@@ -162,10 +162,14 @@ class DetectionTrainer(BaseTrainer):
         Returns:
             (DetectionModel): YOLO detection model.
         """
-        if getattr(self, 'finetune', False) and maskbndict is not None:
+        if getattr(self, "finetune", False) and maskbndict is not None:
             LOGGER.info("Finetune mode: building DetectionModelPruned with maskbndict")
             model = DetectionModelPruned(
-                maskbndict, cfg, ch=self.data["channels"], nc=self.data["nc"], verbose=verbose and RANK == -1,
+                maskbndict,
+                cfg,
+                ch=self.data["channels"],
+                nc=self.data["nc"],
+                verbose=verbose and RANK == -1,
             )
         else:
             model = DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)

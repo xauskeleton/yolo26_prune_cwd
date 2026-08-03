@@ -769,7 +769,7 @@ class Model(torch.nn.Module):
         if args.get("resume"):
             args["resume"] = self.ckpt_path
 
-        # ==================== Pop custom args (Ultralytics bao loi neu gap tham so la) ====================
+        # ==================== Pop custom args (Ultralytics bao loi neu gap than so la) ====================
         sr = args.get("sr", None)
         if sr is not None:
             args.pop("sr")
@@ -798,6 +798,7 @@ class Model(torch.nn.Module):
         # ==================== Resume: restore custom args tu checkpoint ====================
         if args.get("resume"):
             import torch
+
             _ckpt_path = args["resume"]
             if isinstance(_ckpt_path, (str, Path)) and Path(_ckpt_path).exists():
                 _ckpt = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
@@ -1108,7 +1109,7 @@ class Model(torch.nn.Module):
             >>> model.reset_callbacks()
             # All callbacks are now reset to their default functions
         """
-        for event in callbacks.default_callbacks.keys():
+        for event in callbacks.default_callbacks:
             self.callbacks[event] = [callbacks.default_callbacks[event][0]]
 
     @staticmethod

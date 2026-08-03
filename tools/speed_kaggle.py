@@ -13,14 +13,14 @@ Usage (Kaggle notebook cell):
 """
 
 import argparse
-import os
 import sys
 import time
+from collections import OrderedDict
+from copy import deepcopy
+from pathlib import Path
+
 import numpy as np
 import torch
-from pathlib import Path
-from copy import deepcopy
-from collections import OrderedDict
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -83,10 +83,11 @@ def bench_export(model_path, fmt, imgsz, half=False, device="cpu"):
     """Export model and benchmark with AutoBackend directly."""
     from ultralytics import YOLO
     from ultralytics.nn.autobackend import AutoBackend
+
     model = YOLO(model_path)
 
     # Export
-    export_args = dict(format=fmt, imgsz=imgsz, half=half)
+    export_args = {"format": fmt, "imgsz": imgsz, "half": half}
     if fmt == "engine":
         export_args["device"] = 0
     exported = model.export(**export_args)
@@ -137,14 +138,16 @@ def bench_export(model_path, fmt, imgsz, half=False, device="cpu"):
 def get_model_info(model_path):
     """Get params and FLOPs."""
     from ultralytics import YOLO
+
     model = YOLO(model_path)
     params = sum(p.numel() for p in model.model.parameters()) / 1e6
 
     try:
         from thop import profile as thop_profile
+
         dummy = torch.randn(1, 3, 640, 640)
         m = deepcopy(model.model).cpu()
-        if hasattr(m, 'model') and hasattr(m.model[-1], 'export'):
+        if hasattr(m, "model") and hasattr(m.model[-1], "export"):
             m.model[-1].export = True
         flops, _ = thop_profile(m, inputs=(dummy,), verbose=False)
         gflops = flops / 1e9
@@ -155,22 +158,24 @@ def get_model_info(model_path):
 
 
 def print_header(title):
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"  {title}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", nargs="+", required=True,
-                        help="Model paths (first=baseline, rest=pruned)")
-    parser.add_argument("--names", nargs="+", default=None,
-                        help="Display names for each model")
+    parser.add_argument("--weights", nargs="+", required=True, help="Model paths (first=baseline, rest=pruned)")
+    parser.add_argument("--names", nargs="+", default=None, help="Display names for each model")
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, nargs="+", default=[1])
-    parser.add_argument("--mode", nargs="+", default=["gpu_fp32", "gpu_fp16"],
-                        choices=["gpu_fp32", "gpu_fp16", "tensorrt", "onnx_cpu", "cpu", "all"],
-                        help="Benchmark modes")
+    parser.add_argument(
+        "--mode",
+        nargs="+",
+        default=["gpu_fp32", "gpu_fp16"],
+        choices=["gpu_fp32", "gpu_fp16", "tensorrt", "onnx_cpu", "cpu", "all"],
+        help="Benchmark modes",
+    )
     parser.add_argument("--threads", type=int, default=2, help="CPU threads for cpu/onnx_cpu mode")
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--reps", type=int, default=200)
@@ -195,6 +200,7 @@ def main():
     else:
         print("  GPU: None (CPU only)")
     import platform
+
     print(f"  CPU: {platform.processor() or 'unknown'}")
     print(f"  PyTorch: {torch.__version__}")
     print(f"  Image size: {args.imgsz}")
@@ -219,9 +225,15 @@ def main():
             for name, info in models_info.items():
                 results[name] = {}
                 for bs in args.batch:
-                    r = bench_pytorch(deepcopy(info["model"].model), args.imgsz,
-                                      torch.device("cuda"), bs, half=False,
-                                      warmup=args.warmup, reps=args.reps)
+                    r = bench_pytorch(
+                        deepcopy(info["model"].model),
+                        args.imgsz,
+                        torch.device("cuda"),
+                        bs,
+                        half=False,
+                        warmup=args.warmup,
+                        reps=args.reps,
+                    )
                     results[name][bs] = r
                     print(f"  {name:<20s} bs={bs}  {r['median_ms']:.1f}ms  {r['fps']:.1f} FPS")
             all_results["GPU FP32"] = results
@@ -234,9 +246,15 @@ def main():
             for name, info in models_info.items():
                 results[name] = {}
                 for bs in args.batch:
-                    r = bench_pytorch(deepcopy(info["model"].model), args.imgsz,
-                                      torch.device("cuda"), bs, half=True,
-                                      warmup=args.warmup, reps=args.reps)
+                    r = bench_pytorch(
+                        deepcopy(info["model"].model),
+                        args.imgsz,
+                        torch.device("cuda"),
+                        bs,
+                        half=True,
+                        warmup=args.warmup,
+                        reps=args.reps,
+                    )
                     results[name][bs] = r
                     print(f"  {name:<20s} bs={bs}  {r['median_ms']:.1f}ms  {r['fps']:.1f} FPS")
             all_results["GPU FP16"] = results
@@ -282,9 +300,15 @@ def main():
             for name, info in models_info.items():
                 results[name] = {}
                 for bs in args.batch:
-                    r = bench_pytorch(deepcopy(info["model"].model), args.imgsz,
-                                      torch.device("cpu"), bs, half=False,
-                                      warmup=min(args.warmup, 10), reps=min(args.reps, 30))
+                    r = bench_pytorch(
+                        deepcopy(info["model"].model),
+                        args.imgsz,
+                        torch.device("cpu"),
+                        bs,
+                        half=False,
+                        warmup=min(args.warmup, 10),
+                        reps=min(args.reps, 30),
+                    )
                     results[name][bs] = r
                     print(f"  {name:<20s} bs={bs}  {r['median_ms']:.1f}ms  {r['fps']:.1f} FPS")
             all_results[f"CPU FP32 ({args.threads}T)"] = results
@@ -327,7 +351,7 @@ def main():
                     row += f" | {'':>18s} | {'N/A':>7s}"
             print(row)
 
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print("Note: Latency = median after 2-sigma clipping. FPS = 1000/latency (bs=1).")
     if has_cuda:
         print(f"GPU: {torch.cuda.get_device_name(0)}")
