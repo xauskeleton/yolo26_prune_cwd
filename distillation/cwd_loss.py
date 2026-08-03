@@ -1,5 +1,5 @@
 """
-Channel-Wise Distillation (CWD) Loss for Knowledge Distillation
+Channel-Wise Distillation (CWD) Loss for Knowledge Distillation.
 
 Paper: "Channel-wise Knowledge Distillation for Dense Prediction"
 https://arxiv.org/abs/2011.13256
@@ -12,18 +12,17 @@ Channel alignment: uses maskbndict from pruned checkpoint to select
 matching teacher channels (no 1×1 conv adapters needed).
 """
 
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Optional
+from torch import nn
 
 
 class CWDLoss(nn.Module):
-    """
-    Channel-wise Distillation Loss (paper Eq 4-5).
+    """Channel-wise Distillation Loss (paper Eq 4-5).
 
-    Per-channel spatial softmax → KL divergence.
-    Temperature is passed per-forward to support dynamic scheduling.
+    Per-channel spatial softmax → KL divergence. Temperature is passed per-forward to support dynamic scheduling.
     """
 
     def forward(self, student_feats: torch.Tensor, teacher_feats: torch.Tensor, temperature: float) -> torch.Tensor:
@@ -31,12 +30,12 @@ class CWDLoss(nn.Module):
         Args:
             student_feats: [B, C, H, W] (đã align channels)
             teacher_feats: [B, C, H, W] (đã align channels)
-            temperature: softmax temperature τ
+            temperature: softmax temperature τ.
 
         Returns:
             Scalar CWD loss
         """
-        B, C, H, W = student_feats.shape
+        B, C, _H, _W = student_feats.shape
 
         # Flatten spatial: [B, C, H*W]
         s = student_feats.view(B, C, -1)
@@ -44,14 +43,14 @@ class CWDLoss(nn.Module):
 
         # Spatial softmax per channel (Eq 4)
         s_log_soft = F.log_softmax(s / temperature, dim=2)  # [B, C, H*W]
-        t_soft = F.softmax(t / temperature, dim=2)           # [B, C, H*W]
+        t_soft = F.softmax(t / temperature, dim=2)  # [B, C, H*W]
 
         # KL divergence per channel (Eq 5)
         # F.kl_div expects log-prob as input, prob as target
-        loss = F.kl_div(s_log_soft, t_soft, reduction='none').sum(dim=2)  # [B, C]
+        loss = F.kl_div(s_log_soft, t_soft, reduction="none").sum(dim=2)  # [B, C]
 
         # Scale by τ² and average over batch and channels (Eq 5: τ²/C × Σ_c = τ² × mean_c)
-        loss = (temperature ** 2) * loss.mean()
+        loss = (temperature**2) * loss.mean()
 
         return loss
 
@@ -66,9 +65,8 @@ class FeatureHook:
         self.features = output
 
 
-def setup_hooks(model: nn.Module, layer_names: List[str]) -> Dict[str, FeatureHook]:
-    """
-    Register forward hooks on specified layers.
+def setup_hooks(model: nn.Module, layer_names: list[str]) -> dict[str, FeatureHook]:
+    """Register forward hooks on specified layers.
 
     Args:
         model: PyTorch model (unwrapped, not AutoBackend)
@@ -86,16 +84,15 @@ def setup_hooks(model: nn.Module, layer_names: List[str]) -> Dict[str, FeatureHo
     return hooks
 
 
-def build_kd_channel_masks(maskbndict: Dict[str, torch.Tensor], layer_indices: List[int]) -> Dict[str, torch.Tensor]:
-    """
-    Build boolean masks for channel alignment between teacher and pruned student.
+def build_kd_channel_masks(maskbndict: dict[str, torch.Tensor], layer_indices: list[int]) -> dict[str, torch.Tensor]:
+    """Build boolean masks for channel alignment between teacher and pruned student.
 
-    C3k2 module at index i has output BN = model.{i}.cv2.bn.
-    The mask indicates which teacher channels were kept in the student.
+    C3k2 module at index i has output BN = model.{i}.cv2.bn. The mask indicates which teacher channels were kept in the
+    student.
 
     Args:
-        maskbndict: Dict from pruned checkpoint, keys like "model.13.cv2.bn",
-                    values are float tensors [C_teacher] of 0.0/1.0
+        maskbndict: Dict from pruned checkpoint, keys like "model.13.cv2.bn", values are float tensors [C_teacher] of
+            0.0/1.0
         layer_indices: List of layer indices to distill, e.g. [13, 16, 19, 22]
 
     Returns:
@@ -110,14 +107,13 @@ def build_kd_channel_masks(maskbndict: Dict[str, torch.Tensor], layer_indices: L
 
 
 def compute_cwd_loss(
-    student_hooks: Dict[str, FeatureHook],
-    teacher_hooks: Dict[str, FeatureHook],
+    student_hooks: dict[str, FeatureHook],
+    teacher_hooks: dict[str, FeatureHook],
     criterion: CWDLoss,
-    channel_masks: Dict[str, torch.Tensor],
+    channel_masks: dict[str, torch.Tensor],
     temperature: float,
 ) -> torch.Tensor:
-    """
-    Compute CWD loss across all hooked layers.
+    """Compute CWD loss across all hooked layers.
 
     Args:
         student_hooks: Dict of student feature hooks
@@ -146,7 +142,7 @@ def compute_cwd_loss(
 
         # Spatial size mismatch → interpolate teacher to match student
         if s_feat.shape[2:] != t_feat.shape[2:]:
-            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False)
+            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode="bilinear", align_corners=False)
 
         loss = loss + criterion(s_feat, t_feat, temperature)
         count += 1

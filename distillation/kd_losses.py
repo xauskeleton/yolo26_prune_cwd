@@ -1,5 +1,5 @@
 """
-Knowledge Distillation Losses for YOLO Detection
+Knowledge Distillation Losses for YOLO Detection.
 =================================================
 3 KD methods ngoài CWD:
 1. Response KD (Hinton et al. 2015) - KL div trên channel logits
@@ -15,34 +15,31 @@ Chỉ khác loss function.
 """
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List
-
+from torch import nn
 
 # ============================================================================
 # 1. Response KD - KL divergence on channel logits
 # ============================================================================
 
+
 class ResponseKDLoss(nn.Module):
-    """
-    Response-based Knowledge Distillation (Hinton et al. 2015).
+    """Response-based Knowledge Distillation (Hinton et al. 2015).
 
     Khác CWD:
     - CWD:  softmax trên spatial per channel → KL div → capture spatial distribution
     - RKD:  softmax trên channels per spatial → KL div → capture channel distribution
 
-    Cho mỗi spatial location (h,w), treat C channels như C-class logits,
-    teacher soft labels = softmax(t/τ), student log_softmax(s/τ).
+    Cho mỗi spatial location (h,w), treat C channels như C-class logits, teacher soft labels = softmax(t/τ), student
+    log_softmax(s/τ).
     """
 
-    def forward(self, student_feats: torch.Tensor, teacher_feats: torch.Tensor,
-                temperature: float) -> torch.Tensor:
+    def forward(self, student_feats: torch.Tensor, teacher_feats: torch.Tensor, temperature: float) -> torch.Tensor:
         """
         Args:
             student_feats: [B, C, H, W]
             teacher_feats: [B, C, H, W] (đã align channels)
-            temperature: softmax temperature τ
+            temperature: softmax temperature τ.
 
         Returns:
             Scalar KD loss
@@ -58,22 +55,21 @@ class ResponseKDLoss(nn.Module):
         t_soft = F.softmax(t / temperature, dim=-1)
 
         # KL divergence
-        loss = F.kl_div(s_log_soft, t_soft, reduction='batchmean')
+        loss = F.kl_div(s_log_soft, t_soft, reduction="batchmean")
 
         # Scale by τ² (standard KD)
-        return (temperature ** 2) * loss
+        return (temperature**2) * loss
 
 
 # ============================================================================
 # 2. FitNets - MSE feature matching
 # ============================================================================
 
-class FitNetsLoss(nn.Module):
-    """
-    FitNets: Hints for Thin Deep Nets (Romero et al. 2015).
 
-    MSE giữa student và teacher feature maps.
-    Normalize features trước khi tính MSE để ổn định training.
+class FitNetsLoss(nn.Module):
+    """FitNets: Hints for Thin Deep Nets (Romero et al. 2015).
+
+    MSE giữa student và teacher feature maps. Normalize features trước khi tính MSE để ổn định training.
 
     Khi student channels ≠ teacher channels:
     - Dùng channel mask (như CWD) nếu student là pruned model
@@ -83,18 +79,17 @@ class FitNetsLoss(nn.Module):
     def __init__(self, normalize: bool = True):
         """
         Args:
-            normalize: normalize features trước MSE (L2 norm per channel).
-                       Giúp ổn định khi magnitude features khác nhau nhiều.
+            normalize: normalize features trước MSE (L2 norm per channel). Giúp ổn định khi magnitude features khác nhau
+                nhiều.
         """
         super().__init__()
         self.normalize = normalize
 
-    def forward(self, student_feats: torch.Tensor,
-                teacher_feats: torch.Tensor) -> torch.Tensor:
+    def forward(self, student_feats: torch.Tensor, teacher_feats: torch.Tensor) -> torch.Tensor:
         """
         Args:
             student_feats: [B, C, H, W]
-            teacher_feats: [B, C, H, W] (đã align channels)
+            teacher_feats: [B, C, H, W] (đã align channels).
 
         Returns:
             Scalar MSE loss
@@ -112,10 +107,9 @@ class FitNetsLoss(nn.Module):
 # 3. MGD - Masked Generative Distillation
 # ============================================================================
 
+
 class MGDGenerator(nn.Module):
-    """
-    Lightweight generator cho MGD.
-    Project từ masked student features → teacher feature space.
+    """Lightweight generator cho MGD. Project từ masked student features → teacher feature space.
 
     Architecture: Conv1x1 → BN → ReLU → Conv1x1
     """
@@ -134,8 +128,7 @@ class MGDGenerator(nn.Module):
 
 
 class MGDLoss(nn.Module):
-    """
-    Masked Generative Distillation (Yang et al. 2022).
+    """Masked Generative Distillation (Yang et al. 2022).
 
     Ý tưởng:
     1. Random mask một số channels của student features
@@ -143,24 +136,21 @@ class MGDLoss(nn.Module):
     3. MSE loss giữa generated và teacher features
     → Ép student học rich representations, không chỉ copy teacher
 
-    Cần tạo 1 MGDGenerator per layer vì channel sizes khác nhau.
-    Generator params được train cùng student (thêm vào optimizer).
+    Cần tạo 1 MGDGenerator per layer vì channel sizes khác nhau. Generator params được train cùng student (thêm vào
+    optimizer).
     """
 
     def __init__(self, mask_ratio: float = 0.5):
         """
         Args:
-            mask_ratio: tỷ lệ channels bị mask (0.0-1.0), default 0.5
+            mask_ratio: tỷ lệ channels bị mask (0.0-1.0), default 0.5.
         """
         super().__init__()
         self.mask_ratio = mask_ratio
         self.generators = nn.ModuleDict()
 
-    def add_generator(self, layer_name: str, student_channels: int,
-                      teacher_channels: int):
-        """
-        Thêm generator cho 1 layer.
-        Gọi trong setup phase khi biết channel sizes.
+    def add_generator(self, layer_name: str, student_channels: int, teacher_channels: int):
+        """Thêm generator cho 1 layer. Gọi trong setup phase khi biết channel sizes.
 
         Args:
             layer_name: e.g. "model.13"
@@ -168,24 +158,23 @@ class MGDLoss(nn.Module):
             teacher_channels: số channels teacher features
         """
         # ModuleDict không chấp nhận '.' trong key → thay bằng '_'
-        key = layer_name.replace('.', '_')
+        key = layer_name.replace(".", "_")
         self.generators[key] = MGDGenerator(student_channels, teacher_channels)
 
-    def forward(self, student_feats: torch.Tensor, teacher_feats: torch.Tensor,
-                layer_name: str) -> torch.Tensor:
+    def forward(self, student_feats: torch.Tensor, teacher_feats: torch.Tensor, layer_name: str) -> torch.Tensor:
         """
         Args:
             student_feats: [B, C_s, H, W]
             teacher_feats: [B, C_t, H, W] (full teacher, chưa align)
-            layer_name: e.g. "model.13"
+            layer_name: e.g. "model.13".
 
         Returns:
             Scalar MSE loss
         """
-        key = layer_name.replace('.', '_')
+        key = layer_name.replace(".", "_")
         generator = self.generators[key]
 
-        B, C_s, H, W = student_feats.shape
+        _B, C_s, _H, _W = student_feats.shape
 
         # Random channel mask: keep (1-mask_ratio) channels
         mask = torch.ones(1, C_s, 1, 1, device=student_feats.device)
@@ -208,8 +197,8 @@ class MGDLoss(nn.Module):
 # Compute functions (tương tự compute_cwd_loss)
 # ============================================================================
 
-def compute_response_kd_loss(student_hooks, teacher_hooks, criterion,
-                             channel_masks, temperature):
+
+def compute_response_kd_loss(student_hooks, teacher_hooks, criterion, channel_masks, temperature):
     """Compute Response KD loss across all hooked layers."""
     loss = 0.0
     count = 0
@@ -226,8 +215,7 @@ def compute_response_kd_loss(student_hooks, teacher_hooks, criterion,
 
         # Spatial alignment
         if s_feat.shape[2:] != t_feat.shape[2:]:
-            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:],
-                                   mode='bilinear', align_corners=False)
+            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode="bilinear", align_corners=False)
 
         loss = loss + criterion(s_feat, t_feat, temperature)
         count += 1
@@ -237,8 +225,7 @@ def compute_response_kd_loss(student_hooks, teacher_hooks, criterion,
     return loss / count
 
 
-def compute_fitnets_loss(student_hooks, teacher_hooks, criterion,
-                         channel_masks):
+def compute_fitnets_loss(student_hooks, teacher_hooks, criterion, channel_masks):
     """Compute FitNets loss across all hooked layers."""
     loss = 0.0
     count = 0
@@ -255,8 +242,7 @@ def compute_fitnets_loss(student_hooks, teacher_hooks, criterion,
 
         # Spatial alignment
         if s_feat.shape[2:] != t_feat.shape[2:]:
-            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:],
-                                   mode='bilinear', align_corners=False)
+            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode="bilinear", align_corners=False)
 
         loss = loss + criterion(s_feat, t_feat)
         count += 1
@@ -266,13 +252,10 @@ def compute_fitnets_loss(student_hooks, teacher_hooks, criterion,
     return loss / count
 
 
-def compute_mgd_loss(student_hooks, teacher_hooks, criterion,
-                     channel_masks):
-    """
-    Compute MGD loss across all hooked layers.
+def compute_mgd_loss(student_hooks, teacher_hooks, criterion, channel_masks):
+    """Compute MGD loss across all hooked layers.
 
-    Khác CWD/FitNets: KHÔNG align teacher channels trước.
-    Generator xử lý dimension mismatch (student_ch → teacher_ch).
+    Khác CWD/FitNets: KHÔNG align teacher channels trước. Generator xử lý dimension mismatch (student_ch → teacher_ch).
     """
     loss = 0.0
     count = 0
@@ -285,8 +268,7 @@ def compute_mgd_loss(student_hooks, teacher_hooks, criterion,
 
         # Spatial alignment
         if s_feat.shape[2:] != t_feat.shape[2:]:
-            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:],
-                                   mode='bilinear', align_corners=False)
+            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode="bilinear", align_corners=False)
 
         # MGD forward nhận teacher FULL channels (generator project)
         loss = loss + criterion(s_feat, t_feat, name)

@@ -1,4 +1,3 @@
-
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
 Train a model on a dataset.
@@ -8,8 +7,6 @@ Usage:
 """
 
 from __future__ import annotations
-
-from ultralytics.nn.modules.block import Bottleneck, PSABlock
 
 import gc
 import math
@@ -30,6 +27,7 @@ from torch import nn, optim
 from ultralytics import __version__
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
+from ultralytics.nn.modules.block import Bottleneck, PSABlock
 from ultralytics.nn.tasks import load_checkpoint
 from ultralytics.optim import MuSGD
 from ultralytics.utils import (
@@ -238,8 +236,8 @@ class BaseTrainer:
             try:
                 LOGGER.info(f"{colorstr('DDP:')} debug command {' '.join(cmd)}")
                 subprocess.run(cmd, check=True)
-            except Exception as e:
-                raise e
+            except Exception:
+                raise
             finally:
                 ddp_cleanup(self, str(file))
 
@@ -303,7 +301,7 @@ class BaseTrainer:
 
         # ============================= Chuẩn bị Sparsity Training ==========================
         # Giữ giá trị sr đã được gán từ model.py, fallback 0.0 nếu chưa set
-        if not hasattr(self, 'sr') or self.sr is None:
+        if not hasattr(self, "sr") or self.sr is None:
             self.sr = 0.0
         self.ignore_bn_list = []
 
@@ -315,8 +313,8 @@ class BaseTrainer:
                 # 1. Xử lý Bottleneck
                 if isinstance(m, Bottleneck):
                     if m.add:
-                        self.ignore_bn_list.append(k + '.cv2.bn')
-                        if len(k.split('.')) >= 2 and k.split('.')[-2] == 'm':
+                        self.ignore_bn_list.append(k + ".cv2.bn")
+                        if len(k.split(".")) >= 2 and k.split(".")[-2] == "m":
                             parent_name = k.rsplit(".", 2)[0]
                             self.ignore_bn_list.append(parent_name + ".cv1.bn")
 
@@ -325,7 +323,7 @@ class BaseTrainer:
                     for sub_k, sub_m in m.named_modules():
                         if isinstance(sub_m, nn.BatchNorm2d):
                             self.ignore_bn_list.append(f"{k}.{sub_k}")
-                    parts = k.split('.')
+                    parts = k.split(".")
                     if len(parts) >= 2:
                         layer_idx = parts[1]
                         self.ignore_bn_list.append(f"model.{layer_idx}.cv1.bn")
@@ -335,10 +333,10 @@ class BaseTrainer:
         # ============================= Chuẩn bị Sparsity Training ==========================
 
         # ============================= DMS (Differentiable Model Scaling) ==========================
-        self.dms_enabled = getattr(self, 'dms', False)
+        self.dms_enabled = getattr(self, "dms", False)
         self.a_params = {}
         self.dms_hooks = []
-        self.dms_divisor = getattr(self, 'dms_divisor', 8)
+        self.dms_divisor = getattr(self, "dms_divisor", 8)
         self.taylor_buffers = {}
         self._dms_flop_grads = None
         self._dms_ema_task_norm = None
@@ -346,8 +344,10 @@ class BaseTrainer:
 
         if self.dms_enabled:
             from dms.dms_utils import (
-                build_ignore_bn_list, profile_per_layer_flops,
-                build_conv_bn_mapping, DMSMaskManager,
+                DMSMaskManager,
+                build_conv_bn_mapping,
+                build_ignore_bn_list,
+                profile_per_layer_flops,
             )
 
             LOGGER.info(
@@ -377,9 +377,7 @@ class BaseTrainer:
             self.conv_flops, self.total_flops = profile_per_layer_flops(
                 unwrap_model(self.model), imgsz=imgsz, device=self.device
             )
-            self.conv_bn_map, self.bn_channels = build_conv_bn_mapping(
-                unwrap_model(self.model), self.ignore_bn_list
-            )
+            self.conv_bn_map, self.bn_channels = build_conv_bn_mapping(unwrap_model(self.model), self.ignore_bn_list)
 
             # Register Conv pre-hooks (Taylor importance + STE ranking + AMP unscale)
             self.dms_mask_manager = DMSMaskManager(
@@ -388,18 +386,18 @@ class BaseTrainer:
                 bn_modules=dict(prunable_bns),
                 bn_channels=self.bn_channels,
                 grad_scaler_fn=lambda: self.scaler.get_scale() if self.amp else 0,
-                taylor_type=getattr(self, 'dms_taylor_type', 'taylor'),
+                taylor_type=getattr(self, "dms_taylor_type", "taylor"),
             )
             modules_dict = dict(unwrap_model(self.model).named_modules())
             self.dms_hooks = self.dms_mask_manager.register_all_hooks(
-                self.conv_bn_map, modules_dict,
+                self.conv_bn_map,
+                modules_dict,
             )
-            LOGGER.info(f"[DMS] Registered {len(self.dms_hooks)} Conv pre-hooks (taylor_type={getattr(self, 'dms_taylor_type', 'taylor')})")
-
             LOGGER.info(
-                f"[DMS] {len(self.a_params)} learnable a params, "
-                f"{self.total_flops / 1e9:.2f} GFLOPs original"
+                f"[DMS] Registered {len(self.dms_hooks)} Conv pre-hooks (taylor_type={getattr(self, 'dms_taylor_type', 'taylor')})"
             )
+
+            LOGGER.info(f"[DMS] {len(self.a_params)} learnable a params, {self.total_flops / 1e9:.2f} GFLOPs original")
         # ============================= DMS (Differentiable Model Scaling) ==========================
 
         # Freeze layers
@@ -454,10 +452,8 @@ class BaseTrainer:
         # ============================= DMS: separate optimizer for a_params ==========================
         # Use separate optimizer to avoid scheduler mismatch (scheduler tracks model optimizer only)
         if self.dms_enabled and self.a_params:
-            dms_lr = getattr(self, 'dms_lr', 2e-5)
-            self.dms_optimizer = torch.optim.Adam(
-                list(self.a_params.values()), lr=dms_lr
-            )
+            dms_lr = getattr(self, "dms_lr", 2e-5)
+            self.dms_optimizer = torch.optim.Adam(list(self.a_params.values()), lr=dms_lr)
             LOGGER.info(f"[DMS] Created separate Adam optimizer for {len(self.a_params)} a_params (lr={dms_lr}).")
         # ============================= DMS: separate optimizer for a_params ==========================
 
@@ -475,13 +471,14 @@ class BaseTrainer:
         self.run_callbacks("on_pretrain_routine_end")
 
         # ============================= CWD (Channel-Wise Distillation) ==========================
-        self.kd_enabled = getattr(self, 'kd', False)
+        self.kd_enabled = getattr(self, "kd", False)
         if self.kd_enabled:
             import math as _math
-            from distillation.cwd_loss import CWDLoss, setup_hooks, build_kd_channel_masks
+
+            from distillation.cwd_loss import CWDLoss, build_kd_channel_masks, setup_hooks
             from ultralytics.nn.autobackend import AutoBackend
 
-            teacher_path = getattr(self, 'kd_teacher', None)
+            teacher_path = getattr(self, "kd_teacher", None)
             assert teacher_path, "kd=True requires kd_teacher='path/to/teacher.pt'"
 
             # Load + freeze teacher
@@ -491,7 +488,7 @@ class BaseTrainer:
                 p.requires_grad = False
 
             # Distill layer indices
-            layers_cfg = getattr(self, 'kd_layers', 'neck')
+            layers_cfg = getattr(self, "kd_layers", "neck")
             if layers_cfg == "neck":
                 layer_indices = [13, 16, 19, 22]
             elif layers_cfg == "backbone":
@@ -506,7 +503,7 @@ class BaseTrainer:
             self.teacher_hooks = setup_hooks(self.teacher_model.model, self.kd_layer_names)
 
             # Build channel masks from maskbndict (if student is pruned)
-            maskbndict = getattr(self, 'kd_maskbndict', None)
+            maskbndict = getattr(self, "kd_maskbndict", None)
             if maskbndict is not None:
                 self.kd_channel_masks = build_kd_channel_masks(maskbndict, layer_indices)
                 LOGGER.info(f"[KD] Channel masks: {len(self.kd_channel_masks)} layers have mismatch")
@@ -514,38 +511,40 @@ class BaseTrainer:
                 self.kd_channel_masks = {}
 
             # Temperature: float=fixed, "learnable"=auto
-            temp_cfg = getattr(self, 'cwd_temperature', 9.0)
+            temp_cfg = getattr(self, "cwd_temperature", 9.0)
             if isinstance(temp_cfg, str) and temp_cfg == "learnable":
                 import math as _math
+
                 self.cwd_temp_mode = "learnable"
-                tau_init = getattr(self, 'cwd_learnable_tau_init', 9.0)
-                self.cwd_log_tau = nn.Parameter(
-                    torch.tensor(_math.log(tau_init), device=self.device)
-                )
-                tau_lr = getattr(self, 'cwd_learnable_tau_lr', 1e-3)
+                tau_init = getattr(self, "cwd_learnable_tau_init", 9.0)
+                self.cwd_log_tau = nn.Parameter(torch.tensor(_math.log(tau_init), device=self.device))
+                tau_lr = getattr(self, "cwd_learnable_tau_lr", 1e-3)
                 self.cwd_tau_optimizer = torch.optim.Adam([self.cwd_log_tau], lr=tau_lr)
                 LOGGER.info(f"[CWD] Learnable tau: init={tau_init:.1f}, lr={tau_lr}")
             else:
                 self.cwd_temp_mode = "fixed"
                 self.cwd_temp_value = float(temp_cfg)
 
-            self._kd_lambda = getattr(self, 'kd_lambda', 0.5)
+            self._kd_lambda = getattr(self, "kd_lambda", 0.5)
 
             # KD method selection: cwd (default), response, fitnets, mgd
-            self._kd_method = getattr(self, 'kd_method', 'cwd')
+            self._kd_method = getattr(self, "kd_method", "cwd")
 
             if self._kd_method == "cwd":
                 self.kd_criterion = CWDLoss()
             elif self._kd_method == "response":
                 from distillation.kd_losses import ResponseKDLoss
+
                 self.kd_criterion = ResponseKDLoss()
             elif self._kd_method == "fitnets":
                 from distillation.kd_losses import FitNetsLoss
-                normalize = getattr(self, 'fitnets_normalize', True)
+
+                normalize = getattr(self, "fitnets_normalize", True)
                 self.kd_criterion = FitNetsLoss(normalize=normalize)
             elif self._kd_method == "mgd":
                 from distillation.kd_losses import MGDLoss
-                mgd_mask_ratio = getattr(self, 'mgd_mask_ratio', 0.5)
+
+                mgd_mask_ratio = getattr(self, "mgd_mask_ratio", 0.5)
                 self.kd_criterion = MGDLoss(mask_ratio=mgd_mask_ratio)
 
                 # MGD cần biết channel sizes → chạy dummy forward để lấy
@@ -563,17 +562,18 @@ class BaseTrainer:
 
                 # Move generators lên device, thêm vào optimizer
                 self.kd_criterion.to(self.device)
-                self._mgd_optimizer = torch.optim.Adam(
-                    self.kd_criterion.parameters(), lr=1e-3
-                )
+                self._mgd_optimizer = torch.optim.Adam(self.kd_criterion.parameters(), lr=1e-3)
             else:
-                raise ValueError(f"Unknown kd_method: {self._kd_method}. "
-                                 f"Choose from: cwd, response, fitnets, mgd")
+                raise ValueError(f"Unknown kd_method: {self._kd_method}. Choose from: cwd, response, fitnets, mgd")
 
             LOGGER.info(f"[KD] ENABLED: method={self._kd_method}, teacher={teacher_path}, lambda={self._kd_lambda}")
-            temp_info = f"learnable (init={getattr(self, 'cwd_learnable_tau_init', 9.0)})" if self.cwd_temp_mode == "learnable" else self.cwd_temp_mode
+            temp_info = (
+                f"learnable (init={getattr(self, 'cwd_learnable_tau_init', 9.0)})"
+                if self.cwd_temp_mode == "learnable"
+                else self.cwd_temp_mode
+            )
             LOGGER.info(f"[KD] layers={self.kd_layer_names}, temp={temp_info}")
-            if getattr(self.args, 'resume', False):
+            if getattr(self.args, "resume", False):
                 LOGGER.info("[KD] Resuming KD training...")
         # ============================= CWD (Channel-Wise Distillation) ==========================
 
@@ -652,7 +652,7 @@ class BaseTrainer:
                             loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
                         elif self.dms_enabled:
                             # Reset mask cache before forward (paper: one mask per BN per forward)
-                            if hasattr(self, 'dms_mask_manager'):
+                            if hasattr(self, "dms_mask_manager"):
                                 self.dms_mask_manager.reset_cache()
                             loss, self.loss_items = self.model(batch)
                         else:
@@ -664,11 +664,12 @@ class BaseTrainer:
                         # ============================= DMS loss ==========================
                         if self.dms_enabled:
                             from dms.dms_utils import compute_resource_loss
+
                             # 2-phase scheduler:
                             #   Phase 1 [0, decay_ratio): progressive target, resource loss ON
                             #   Phase 2 [decay_ratio, 1.0]: fixed target, resource loss ON
                             epoch_progress = (epoch + 1) / max(self.epochs, 1)
-                            decay_ratio = getattr(self, 'dms_decay_ratio', 1.0)
+                            decay_ratio = getattr(self, "dms_decay_ratio", 1.0)
                             final_target = self.dms_target
 
                             if epoch_progress < decay_ratio:
@@ -682,8 +683,12 @@ class BaseTrainer:
                                 self._dms_phase = "stabilize"
 
                             loss_resource = compute_resource_loss(
-                                self.a_params, self.conv_flops, self.conv_bn_map,
-                                self.bn_channels, self.total_flops, current_target,
+                                self.a_params,
+                                self.conv_flops,
+                                self.conv_bn_map,
+                                self.bn_channels,
+                                self.total_flops,
+                                current_target,
                                 mask_manager=self.dms_mask_manager,
                             )
                             self.loss = self.loss + self.dms_lambda * loss_resource
@@ -697,10 +702,10 @@ class BaseTrainer:
                         )
 
                     # ============================= KD loss (CWD/Response/FitNets/MGD) ==========================
-                    if getattr(self, 'kd_enabled', False):
+                    if getattr(self, "kd_enabled", False):
                         import math as _math
 
-                        kd_warmup = getattr(self, 'kd_warmup', 5)
+                        kd_warmup = getattr(self, "kd_warmup", 5)
                         if epoch >= kd_warmup:
                             with torch.no_grad():
                                 self.teacher_model(batch["img"])
@@ -714,32 +719,44 @@ class BaseTrainer:
                             # Compute KD loss under autocast to match AMP dtypes
                             with autocast(self.amp):
                                 # Dispatch theo kd_method
-                                kd_method = getattr(self, '_kd_method', 'cwd')
+                                kd_method = getattr(self, "_kd_method", "cwd")
                                 if kd_method == "cwd":
                                     from distillation.cwd_loss import compute_cwd_loss
+
                                     kd_loss_val = compute_cwd_loss(
-                                        self.student_hooks, self.teacher_hooks,
-                                        self.kd_criterion, self.kd_channel_masks,
+                                        self.student_hooks,
+                                        self.teacher_hooks,
+                                        self.kd_criterion,
+                                        self.kd_channel_masks,
                                         temperature=tau,
                                     )
                                 elif kd_method == "response":
                                     from distillation.kd_losses import compute_response_kd_loss
+
                                     kd_loss_val = compute_response_kd_loss(
-                                        self.student_hooks, self.teacher_hooks,
-                                        self.kd_criterion, self.kd_channel_masks,
+                                        self.student_hooks,
+                                        self.teacher_hooks,
+                                        self.kd_criterion,
+                                        self.kd_channel_masks,
                                         temperature=tau,
                                     )
                                 elif kd_method == "fitnets":
                                     from distillation.kd_losses import compute_fitnets_loss
+
                                     kd_loss_val = compute_fitnets_loss(
-                                        self.student_hooks, self.teacher_hooks,
-                                        self.kd_criterion, self.kd_channel_masks,
+                                        self.student_hooks,
+                                        self.teacher_hooks,
+                                        self.kd_criterion,
+                                        self.kd_channel_masks,
                                     )
                                 elif kd_method == "mgd":
                                     from distillation.kd_losses import compute_mgd_loss
+
                                     kd_loss_val = compute_mgd_loss(
-                                        self.student_hooks, self.teacher_hooks,
-                                        self.kd_criterion, self.kd_channel_masks,
+                                        self.student_hooks,
+                                        self.teacher_hooks,
+                                        self.kd_criterion,
+                                        self.kd_channel_masks,
                                     )
 
                             # Ramp up lambda linearly over first 5 epochs after warmup
@@ -749,24 +766,31 @@ class BaseTrainer:
                             # Tau regularization: phạt tau xa khỏi init (chống drift lên max clamp)
                             if self.cwd_temp_mode == "learnable":
                                 import math as _math
-                                tau_reg = getattr(self, 'cwd_tau_reg', 0.1)
-                                log_tau_init = _math.log(getattr(self, 'cwd_learnable_tau_init', 9.0))
+
+                                tau_reg = getattr(self, "cwd_tau_reg", 0.1)
+                                log_tau_init = _math.log(getattr(self, "cwd_learnable_tau_init", 9.0))
                                 self.loss = self.loss + tau_reg * (self.cwd_log_tau - log_tau_init) ** 2
                         elif epoch == kd_warmup - 1 and ni == 0:
-                            LOGGER.info(f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {kd_warmup}")
+                            LOGGER.info(
+                                f"[KD] Warmup: {getattr(self, '_kd_method', 'cwd')} will start at epoch {kd_warmup}"
+                            )
                     # ============================= KD loss ==========================
 
                     # ============================= DMS: capture resource gradient for norm_gradient ==
                     self._dms_flop_grads = None
-                    if (getattr(self, 'dms_enabled', False)
-                            and getattr(self, 'dms_grad_scale', -1.0) >= 0
-                            and getattr(self, '_dms_last_resource', None) is not None):
+                    if (
+                        getattr(self, "dms_enabled", False)
+                        and getattr(self, "dms_grad_scale", -1.0) >= 0
+                        and getattr(self, "_dms_last_resource", None) is not None
+                    ):
                         # Compute resource-only gradient on a_params (cheap: small subgraph)
                         scaled_res = self.scaler.scale(self.dms_lambda * self._dms_last_resource)
                         _a_list = list(self.a_params.values())
                         _res_grads = torch.autograd.grad(
-                            scaled_res, _a_list,
-                            retain_graph=True, allow_unused=True,
+                            scaled_res,
+                            _a_list,
+                            retain_graph=True,
+                            allow_unused=True,
                         )
                         self._dms_flop_grads = tuple(
                             g.detach().clone() if g is not None else torch.tensor(0.0, device=self.device)
@@ -776,13 +800,13 @@ class BaseTrainer:
 
                     # Backward
                     # ============================= disable scaler ==========================
-                    if getattr(self, 'sr', 0.0) > 0:
+                    if getattr(self, "sr", 0.0) > 0:
                         self.loss.backward()
                     else:
                         self.scaler.scale(self.loss).backward()
 
                     # ============================= sparsity training ==========================
-                    if getattr(self, 'sr', 0.0) > 0:
+                    if getattr(self, "sr", 0.0) > 0:
                         srtmp = self.sr * (1 - 0.9 * self.epoch / self.epochs)
                         for k, m in unwrap_model(self.model).named_modules():
                             if isinstance(m, nn.BatchNorm2d) and (k not in self.ignore_bn_list):
@@ -860,7 +884,7 @@ class BaseTrainer:
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
 
             # ============================= SR epoch logging ==========================
-            if getattr(self, 'sr', 0.0) > 0 and RANK in {-1, 0}:
+            if getattr(self, "sr", 0.0) > 0 and RANK in {-1, 0}:
                 srtmp = self.sr * (1 - 0.9 * epoch / self.epochs)
                 gammas = []
                 for k, m in unwrap_model(self.model).named_modules():
@@ -872,24 +896,26 @@ class BaseTrainer:
                     gamma_mean = all_gamma.mean().item()
                     gamma_std = all_gamma.std().item()
                     self.sr_metrics = {"sr/sparsity": sparsity, "sr/gamma_mean": gamma_mean, "sr/gamma_std": gamma_std}
-                    LOGGER.info(f"[SR] Epoch {epoch}: sr_tmp={srtmp:.6f}, sparsity={sparsity:.1f}%, gamma_mean={gamma_mean:.4f}, gamma_std={gamma_std:.4f}")
+                    LOGGER.info(
+                        f"[SR] Epoch {epoch}: sr_tmp={srtmp:.6f}, sparsity={sparsity:.1f}%, gamma_mean={gamma_mean:.4f}, gamma_std={gamma_std:.4f}"
+                    )
             # ============================= SR epoch logging ==========================
 
             # ============================= DMS epoch logging ==========================
-            if getattr(self, 'dms_enabled', False) and self.a_params and RANK in {-1, 0}:
+            if getattr(self, "dms_enabled", False) and self.a_params and RANK in {-1, 0}:
                 avg_a = sum(a.item() for a in self.a_params.values()) / len(self.a_params)
                 min_a = min(a.item() for a in self.a_params.values())
                 max_a = max(a.item() for a in self.a_params.values())
 
-                ct = getattr(self, '_dms_current_target', self.dms_target)
-                phase = getattr(self, '_dms_phase', 'progressive')
-                rl = getattr(self, '_dms_last_resource', None)
-                if rl is not None and hasattr(rl, 'gflops_effective'):
+                ct = getattr(self, "_dms_current_target", self.dms_target)
+                phase = getattr(self, "_dms_phase", "progressive")
+                rl = getattr(self, "_dms_last_resource", None)
+                if rl is not None and hasattr(rl, "gflops_effective"):
                     LOGGER.info(
                         f"[DMS] Epoch {epoch} [{phase}]: avg_a={avg_a:.4f}, "
                         f"min={min_a:.4f}, max={max_a:.4f} | "
                         f"GFLOPs: {rl.gflops_effective:.2f}/{rl.gflops_total:.2f} "
-                        f"({(1-rl.retention)*100:.1f}% pruned, target={(1-rl.target_retention)*100:.1f}%) "
+                        f"({(1 - rl.retention) * 100:.1f}% pruned, target={(1 - rl.target_retention) * 100:.1f}%) "
                         f"res_loss={rl.item():.4f} | "
                         f"target={ct:.3f}/{self.dms_target:.3f}"
                     )
@@ -902,10 +928,12 @@ class BaseTrainer:
             # ============================= DMS epoch logging ==========================
 
             # ============================= CWD epoch logging ==========================
-            if getattr(self, 'kd_enabled', False) and RANK in {-1, 0}:
+            if getattr(self, "kd_enabled", False) and RANK in {-1, 0}:
                 if self.cwd_temp_mode == "learnable":
                     tau_val = self.cwd_log_tau.exp().clamp(0.5, 20.0).item()
-                    LOGGER.info(f"[CWD] Epoch {epoch}: tau={tau_val:.4f} (learnable, log_tau={self.cwd_log_tau.item():.4f})")
+                    LOGGER.info(
+                        f"[CWD] Epoch {epoch}: tau={tau_val:.4f} (learnable, log_tau={self.cwd_log_tau.item():.4f})"
+                    )
                 else:
                     LOGGER.info(f"[CWD] Epoch {epoch}: tau={self.cwd_temp_value:.2f}")
             # ============================= CWD epoch logging ==========================
@@ -926,7 +954,7 @@ class BaseTrainer:
 
             self.nan_recovery_attempts = 0
             if RANK in {-1, 0}:
-                sr_m = getattr(self, 'sr_metrics', {})
+                sr_m = getattr(self, "sr_metrics", {})
                 self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr, **sr_m})
                 self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
                 if self.args.time:
@@ -1032,71 +1060,69 @@ class BaseTrainer:
         # Serialize ckpt to a byte buffer once (faster than repeated torch.save() calls)
         buffer = io.BytesIO()
         ckpt_dict = {
-                "epoch": self.epoch,
-                "best_fitness": self.best_fitness,
-                "model": None,  # resume and final checkpoints derive from EMA
-                "ema": deepcopy(unwrap_model(self.ema.ema)).half(),
-                "updates": self.ema.updates,
-                "optimizer": convert_optimizer_state_dict_to_fp16(deepcopy(self.optimizer.state_dict())),
-                "scaler": self.scaler.state_dict(),
-                "train_args": vars(self.args),  # save as dict
-                "train_metrics": {**self.metrics, **{"fitness": self.fitness}},
-                "train_results": self.read_results_csv(),
-                "date": datetime.now().isoformat(),
-                "version": __version__,
-                "git": {
-                    "root": str(GIT.root),
-                    "branch": GIT.branch,
-                    "commit": GIT.commit,
-                    "origin": GIT.origin,
-                },
-                "license": "AGPL-3.0 (https://ultralytics.com/license)",
-                "docs": "https://docs.ultralytics.com",
+            "epoch": self.epoch,
+            "best_fitness": self.best_fitness,
+            "model": None,  # resume and final checkpoints derive from EMA
+            "ema": deepcopy(unwrap_model(self.ema.ema)).half(),
+            "updates": self.ema.updates,
+            "optimizer": convert_optimizer_state_dict_to_fp16(deepcopy(self.optimizer.state_dict())),
+            "scaler": self.scaler.state_dict(),
+            "train_args": vars(self.args),  # save as dict
+            "train_metrics": {**self.metrics, "fitness": self.fitness},
+            "train_results": self.read_results_csv(),
+            "date": datetime.now().isoformat(),
+            "version": __version__,
+            "git": {
+                "root": str(GIT.root),
+                "branch": GIT.branch,
+                "commit": GIT.commit,
+                "origin": GIT.origin,
+            },
+            "license": "AGPL-3.0 (https://ultralytics.com/license)",
+            "docs": "https://docs.ultralytics.com",
         }
 
         # ============================= Custom args: save for resume ==========================
         ckpt_dict["custom_training_args"] = {
-            "sr": getattr(self, 'sr', None),
-            "dms": getattr(self, 'dms_enabled', False),
-            "dms_target": getattr(self, 'dms_target', 0.3),
-            "dms_lambda": getattr(self, 'dms_lambda', 1.0),
-            "dms_lr": getattr(self, 'dms_lr', 2e-5),
-            "dms_taylor_type": getattr(self, 'dms_taylor_type', 'taylor'),
-            "dms_decay_ratio": getattr(self, 'dms_decay_ratio', 1),
-            "dms_grad_scale": getattr(self, 'dms_grad_scale', -1.0),
-            "finetune": getattr(self, 'finetune', False),
-            "kd": getattr(self, 'kd_enabled', False),
-            "kd_teacher": getattr(self, 'kd_teacher', None),
-            "kd_lambda": getattr(self, '_kd_lambda', 0.5),
-            "cwd_temperature": getattr(self, 'cwd_temperature', 9.0),
-            "kd_layers": getattr(self, 'kd_layers', 'neck'),
-            "kd_warmup": getattr(self, 'kd_warmup', 5),
-            "cwd_learnable_tau_lr": getattr(self, 'cwd_learnable_tau_lr', 1e-3),
-            "cwd_learnable_tau_init": getattr(self, 'cwd_learnable_tau_init', 9.0),
-            "kd_method": getattr(self, '_kd_method', 'cwd'),
-            "mgd_mask_ratio": getattr(self, 'mgd_mask_ratio', 0.5),
-            "fitnets_normalize": getattr(self, 'fitnets_normalize', True),
+            "sr": getattr(self, "sr", None),
+            "dms": getattr(self, "dms_enabled", False),
+            "dms_target": getattr(self, "dms_target", 0.3),
+            "dms_lambda": getattr(self, "dms_lambda", 1.0),
+            "dms_lr": getattr(self, "dms_lr", 2e-5),
+            "dms_taylor_type": getattr(self, "dms_taylor_type", "taylor"),
+            "dms_decay_ratio": getattr(self, "dms_decay_ratio", 1),
+            "dms_grad_scale": getattr(self, "dms_grad_scale", -1.0),
+            "finetune": getattr(self, "finetune", False),
+            "kd": getattr(self, "kd_enabled", False),
+            "kd_teacher": getattr(self, "kd_teacher", None),
+            "kd_lambda": getattr(self, "_kd_lambda", 0.5),
+            "cwd_temperature": getattr(self, "cwd_temperature", 9.0),
+            "kd_layers": getattr(self, "kd_layers", "neck"),
+            "kd_warmup": getattr(self, "kd_warmup", 5),
+            "cwd_learnable_tau_lr": getattr(self, "cwd_learnable_tau_lr", 1e-3),
+            "cwd_learnable_tau_init": getattr(self, "cwd_learnable_tau_init", 9.0),
+            "kd_method": getattr(self, "_kd_method", "cwd"),
+            "mgd_mask_ratio": getattr(self, "mgd_mask_ratio", 0.5),
+            "fitnets_normalize": getattr(self, "fitnets_normalize", True),
         }
         # ============================= Custom args: save for resume ==========================
 
         # ============================= Finetune: save maskbndict for resume ==========================
-        if getattr(self, 'finetune', False):
-            maskbndict = getattr(self, 'maskbndict', None) or getattr(self, 'kd_maskbndict', None)
+        if getattr(self, "finetune", False):
+            maskbndict = getattr(self, "maskbndict", None) or getattr(self, "kd_maskbndict", None)
             if maskbndict is not None:
                 ckpt_dict["maskbndict"] = maskbndict
         # ============================= Finetune: save maskbndict for resume ==========================
 
         # ============================= DMS: save a params + optimizer ==========================
-        if getattr(self, 'dms_enabled', False) and self.a_params:
-            ckpt_dict["dms_a_params"] = {
-                name: a.detach().cpu() for name, a in self.a_params.items()
-            }
-            if hasattr(self, 'dms_optimizer'):
+        if getattr(self, "dms_enabled", False) and self.a_params:
+            ckpt_dict["dms_a_params"] = {name: a.detach().cpu() for name, a in self.a_params.items()}
+            if hasattr(self, "dms_optimizer"):
                 ckpt_dict["dms_optimizer"] = self.dms_optimizer.state_dict()
         # ============================= DMS: save a params + optimizer ==========================
 
         # ============================= DMS: clean hooks from EMA copy (closures can't be pickled) ==
-        if getattr(self, 'dms_enabled', False) and self.dms_hooks:
+        if getattr(self, "dms_enabled", False) and self.dms_hooks:
             ema_model = ckpt_dict.get("ema")
             if ema_model is not None:
                 for m in ema_model.modules():
@@ -1105,26 +1131,26 @@ class BaseTrainer:
         # =======================================================================================
 
         # ============================= CWD: save state for resume ==========================
-        if getattr(self, 'kd_enabled', False):
+        if getattr(self, "kd_enabled", False):
             ckpt_dict["kd_state"] = {
-                "teacher": getattr(self, 'kd_teacher', None),
+                "teacher": getattr(self, "kd_teacher", None),
                 "lambda": self._kd_lambda,
-                "temperature": getattr(self, 'cwd_temperature', 6.0),
-                "layers": getattr(self, 'kd_layers', 'neck'),
+                "temperature": getattr(self, "cwd_temperature", 6.0),
+                "layers": getattr(self, "kd_layers", "neck"),
             }
             # Save learnable tau state
-            if self.cwd_temp_mode == "learnable" and hasattr(self, 'cwd_log_tau'):
+            if self.cwd_temp_mode == "learnable" and hasattr(self, "cwd_log_tau"):
                 ckpt_dict["cwd_learnable_tau_state"] = {
                     "log_tau": self.cwd_log_tau.detach().cpu(),
                     "optimizer": self.cwd_tau_optimizer.state_dict(),
                 }
-            maskbndict = getattr(self, 'kd_maskbndict', None)
+            maskbndict = getattr(self, "kd_maskbndict", None)
             if maskbndict is not None:
                 ckpt_dict["maskbndict"] = maskbndict
         # ============================= CWD: save state for resume ==========================
 
         # ============================= CWD: clean hooks from EMA copy ==========================
-        if getattr(self, 'kd_enabled', False):
+        if getattr(self, "kd_enabled", False):
             ema_model = ckpt_dict.get("ema")
             if ema_model is not None:
                 for m in ema_model.modules():
@@ -1197,19 +1223,19 @@ class BaseTrainer:
             weights, _ = load_checkpoint(self.args.pretrained)
         # Truyen maskbndict khi resume finetune de build DetectionModelPruned
         maskbndict = None
-        if getattr(self, 'finetune', False) and ckpt is not None:
-            maskbndict = ckpt.get('maskbndict', None) or getattr(self, 'maskbndict', None)
+        if getattr(self, "finetune", False) and ckpt is not None:
+            maskbndict = ckpt.get("maskbndict", None) or getattr(self, "maskbndict", None)
         self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK == -1, maskbndict=maskbndict)
         return ckpt
 
     def optimizer_step(self):
         """Perform a single step of the training optimizer with gradient clipping and EMA update."""
         # ============================= disable scaler/grad clip =============================
-        if getattr(self, 'sr', 0.0) > 0:
+        if getattr(self, "sr", 0.0) > 0:
             self.optimizer.step()
             self.optimizer.zero_grad()
         # ============================= disable scaler/grad clip =============================
-        elif getattr(self, 'dms_enabled', False):
+        elif getattr(self, "dms_enabled", False):
             dms_scale = self.scaler.get_scale()
             # Main optimizer qua scaler
             self.scaler.unscale_(self.optimizer)
@@ -1219,18 +1245,16 @@ class BaseTrainer:
             self.optimizer.zero_grad()
 
             # DMS gradient processing: unscale + optional gradient normalization
-            dms_grad_scale = getattr(self, 'dms_grad_scale', -1.0)
+            dms_grad_scale = getattr(self, "dms_grad_scale", -1.0)
             dms_skip = False
             none_count = 0
             grad_vals = []
             norm_applied = False
-            task_norm_val = 0.0
-            flop_norm_val = 0.0
 
             if self._dms_flop_grads is not None and dms_grad_scale >= 0:
                 # --- Gradient normalization (matching ICML 2024 norm_gradient) ---
                 # Separate task vs flop gradients, normalize flop to task magnitude
-                names = list(self.a_params.keys())
+                list(self.a_params.keys())
                 task_list = []
                 flop_list = []
                 for i, (name, a) in enumerate(self.a_params.items()):
@@ -1252,13 +1276,13 @@ class BaseTrainer:
 
                     if not (e_norm.isnan() or e_flop_norm.isnan()):
                         # EMA for task norm (matching original: smooth tracking)
-                        if not hasattr(self, '_dms_ema_task_norm') or self._dms_ema_task_norm is None:
+                        if not hasattr(self, "_dms_ema_task_norm") or self._dms_ema_task_norm is None:
                             self._dms_ema_task_norm = e_norm.clone()
                         else:
                             self._dms_ema_task_norm = e_norm * 0.01 + self._dms_ema_task_norm * 0.99
                         self._dms_ema_flop_norm = e_flop_norm.clone()
-                        task_norm_val = self._dms_ema_task_norm.item()
-                        flop_norm_val = e_flop_norm.item()
+                        self._dms_ema_task_norm.item()
+                        e_flop_norm.item()
 
                         if e_norm > 0 and e_flop_norm > 0:
                             # Normalize: scale flop grad to match EMA task norm
@@ -1292,11 +1316,11 @@ class BaseTrainer:
 
             # Clamp a to [min_ch/N, 1 - divisor/N] per layer
             with torch.no_grad():
-                divisor = getattr(self, 'dms_divisor', 8)
+                divisor = getattr(self, "dms_divisor", 8)
                 min_ch = 24
                 for name, a in self.a_params.items():
                     n_channels = self.bn_channels.get(name, 256)
-                    a_min = divisor / n_channels       # prune at least divisor channels (alignment)
+                    a_min = divisor / n_channels  # prune at least divisor channels (alignment)
                     a_max = 1.0 - min_ch / n_channels  # keep at least min_ch channels
                     a.clamp_(a_min, a_max)
         else:
@@ -1307,12 +1331,12 @@ class BaseTrainer:
             self.optimizer.zero_grad()
 
         # MGD generator optimizer step (riêng biệt, giống DMS)
-        if getattr(self, '_kd_method', None) == 'mgd' and hasattr(self, '_mgd_optimizer'):
+        if getattr(self, "_kd_method", None) == "mgd" and hasattr(self, "_mgd_optimizer"):
             self._mgd_optimizer.step()
             self._mgd_optimizer.zero_grad()
 
         # CWD learnable tau optimizer step
-        if getattr(self, 'cwd_temp_mode', None) == "learnable" and hasattr(self, 'cwd_tau_optimizer'):
+        if getattr(self, "cwd_temp_mode", None) == "learnable" and hasattr(self, "cwd_tau_optimizer"):
             # Unscale gradient manually (scaler chỉ biết main optimizer)
             scale = self.scaler.get_scale()
             if self.cwd_log_tau.grad is not None:
@@ -1323,6 +1347,7 @@ class BaseTrainer:
             # Clamp log_tau để tau ∈ [0.5, 20]
             with torch.no_grad():
                 import math as _math
+
                 self.cwd_log_tau.clamp_(_math.log(0.5), _math.log(20.0))
 
         if self.ema:
@@ -1383,7 +1408,6 @@ class BaseTrainer:
 
     def build_targets(self, preds, targets):
         """Build target tensors for training YOLO model."""
-        pass
 
     def progress_string(self):
         """Return a string describing training progress."""
@@ -1392,11 +1416,9 @@ class BaseTrainer:
     # TODO: may need to put these following functions into callback
     def plot_training_samples(self, batch, ni):
         """Plot training samples during YOLO training."""
-        pass
 
     def plot_training_labels(self):
         """Plot training labels for YOLO model."""
-        pass
 
     def save_metrics(self, metrics):
         """Save training metrics to a CSV file."""
@@ -1548,8 +1570,8 @@ class BaseTrainer:
         self._load_checkpoint_state(ckpt)
 
         # ============================= DMS: restore a_params + optimizer ==========================
-        if getattr(self, 'dms_enabled', False) and self.a_params:
-            saved_a = ckpt.get('dms_a_params', {})
+        if getattr(self, "dms_enabled", False) and self.a_params:
+            saved_a = ckpt.get("dms_a_params", {})
             if saved_a:
                 restored = 0
                 for name, a_param in self.a_params.items():
@@ -1561,23 +1583,23 @@ class BaseTrainer:
             else:
                 LOGGER.warning("[DMS] No dms_a_params in checkpoint, using default init.")
             # Restore dms_optimizer state (Adam momentum etc.)
-            saved_dms_opt = ckpt.get('dms_optimizer')
-            if saved_dms_opt and hasattr(self, 'dms_optimizer'):
+            saved_dms_opt = ckpt.get("dms_optimizer")
+            if saved_dms_opt and hasattr(self, "dms_optimizer"):
                 self.dms_optimizer.load_state_dict(saved_dms_opt)
                 LOGGER.info("[DMS] Restored dms_optimizer state from checkpoint.")
         # ============================= DMS: restore a_params + optimizer ==========================
 
         # ============================= CWD: restore learnable tau ==========================
-        if getattr(self, 'cwd_temp_mode', None) == "learnable" and hasattr(self, 'cwd_log_tau'):
-            saved_tau_state = ckpt.get('cwd_learnable_tau_state', {})
+        if getattr(self, "cwd_temp_mode", None) == "learnable" and hasattr(self, "cwd_log_tau"):
+            saved_tau_state = ckpt.get("cwd_learnable_tau_state", {})
             if saved_tau_state:
-                saved_log_tau = saved_tau_state.get('log_tau')
+                saved_log_tau = saved_tau_state.get("log_tau")
                 if saved_log_tau is not None:
                     with torch.no_grad():
                         self.cwd_log_tau.copy_(saved_log_tau.to(self.cwd_log_tau.device))
                     LOGGER.info(f"[CWD] Restored learnable tau={self.cwd_log_tau.exp().item():.4f}")
-                saved_tau_opt = saved_tau_state.get('optimizer')
-                if saved_tau_opt and hasattr(self, 'cwd_tau_optimizer'):
+                saved_tau_opt = saved_tau_state.get("optimizer")
+                if saved_tau_opt and hasattr(self, "cwd_tau_optimizer"):
                     self.cwd_tau_optimizer.load_state_dict(saved_tau_opt)
                     LOGGER.info("[CWD] Restored tau optimizer state.")
         # ============================= CWD: restore learnable tau ==========================
@@ -1641,11 +1663,11 @@ class BaseTrainer:
         optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "MuSGD", "auto"}
         name = {x.lower(): x for x in optimizers}.get(name.lower())
         if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
-            optim_args = dict(lr=lr, betas=(momentum, 0.999), weight_decay=0.0)
+            optim_args = {"lr": lr, "betas": (momentum, 0.999), "weight_decay": 0.0}
         elif name == "RMSProp":
-            optim_args = dict(lr=lr, momentum=momentum)
+            optim_args = {"lr": lr, "momentum": momentum}
         elif name == "SGD" or name == "MuSGD":
-            optim_args = dict(lr=lr, momentum=momentum, nesterov=True)
+            optim_args = {"lr": lr, "momentum": momentum, "nesterov": True}
         else:
             raise NotImplementedError(
                 f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
