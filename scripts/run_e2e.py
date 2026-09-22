@@ -130,7 +130,15 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
     if last.exists() and (run_dir / "args.yaml").exists() and 0 < done < epochs:
         print(f"  -> RESUME tu {last}  (da co {done}/{epochs} epoch)")
         m = (build or YOLO)(str(last))
-        m.train(resume=True)
+        try:
+            m.train(resume=True)
+        except Exception as exc:
+            # Ultralytics tu choi resume mot run da ket thuc (vd early stop do patience).
+            # Khi do coi nhu xong o so epoch dang co, dung best.pt, KHONG train lai tu dau.
+            if "finished" in str(exc).lower() or "nothing to resume" in str(exc).lower():
+                print(f"  (run da ket thuc som o epoch {done}: {exc})")
+                return (build or YOLO)(str(run_dir / "weights" / "best.pt")), done
+            raise
         return m, done
 
     if done >= epochs:
@@ -217,6 +225,19 @@ def stage_finetune(a, man):
     banner(f"STAGE 3/6  FINETUNE + {a.kd_method.upper()}  ({a.epochs} epoch)")
     from ultralytics import YOLO
 
+    # DDP KHONG dung duoc voi pipeline nay.
+    # ultralytics/utils/dist.py:generate_ddp_file() chi serialize vars(trainer.args),
+    # trong khi model.py gan finetune/kd/kd_teacher/maskbndict thang len OBJECT trainer
+    # (khong nam trong args, khong co trong default.yaml). Tien trinh con DDP dung lai
+    # trainer tu args -> trainer.py:478 `self.kd_enabled = getattr(self, 'kd', False)`
+    # thanh False -> train 100 epoch KHONG he co CWD ma KHONG bao loi gi.
+    if a.kd_method != "none" and isinstance(a.device, (list, tuple)):
+        raise SystemExit(
+            "!! device={} (DDP) + kd={} => CWD se bi TAT AM THAM trong tien trinh con.\n"
+            "   Dung --device 0 (mot GPU). Xem ultralytics/utils/dist.py:generate_ddp_file."
+            .format(a.device, a.kd_method)
+        )
+
     pruned = a.pruned_weights or need(man, skey(a, "prune"), "weights")
     teacher = a.teacher_weights or need(man, "baseline", "weights")
 
@@ -252,6 +273,11 @@ def stage_finetune(a, man):
     free_gpu()
 
 
+def one_device(dev):
+    """Val/do dac chi chay mot GPU; truyen list vao validator khong dam bao chay."""
+    return dev[0] if isinstance(dev, (list, tuple)) and dev else dev
+
+
 def stage_val(a, man):
     """Do AP tren VOC2007 test cho ca baseline lan model cuoi."""
     banner("STAGE 4/6  VAL")
@@ -271,7 +297,7 @@ def stage_val(a, man):
     for tag, w in targets:
         print(f"\n  [{tag}] {w}")
         m = YOLO(w)
-        r = m.val(data=a.data, imgsz=a.imgsz, batch=a.batch, device=a.device)
+        r = m.val(data=a.data, imgsz=a.imgsz, batch=a.batch, device=one_device(a.device))
         # Do dac phu: hong thi bo qua, KHONG duoc lam mat ket qua AP
         try:
             params = sum(p.numel() for p in m.model.parameters()) / 1e6
