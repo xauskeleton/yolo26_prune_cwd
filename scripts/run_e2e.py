@@ -180,6 +180,10 @@ def stage_prune(a, man):
     model, bn_dict, ignore_bn_list, _chunk, layer_ratio_cfg, pruned_yaml = \
         load_and_prepare(src, a.cfg, a.model_size, a.layer_ratio)
 
+    # Repo clone ve KHONG co thu muc weights/ (bi gitignore), ma finalize_pruning
+    # goi torch.save thang -> "Parent directory ... does not exist".
+    (ROOT / "weights").mkdir(parents=True, exist_ok=True)
+
     importance = compute_l1norm_importance(model, bn_dict, ignore_bn_list)
     maskbndict = create_masks(importance, model, ignore_bn_list, layer_ratio_cfg,
                               a.prune_ratio, a.divisor)
@@ -230,6 +234,7 @@ def stage_finetune(a, man):
         raise SystemExit("!! Finetune xong nhung khong tim thay best.pt")
 
     dst = ROOT / "weights" / f"yolo26{a.model_size}_pruned_{a.kd_method}_{a.tag}.pt"
+    dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best, dst)
     print(f"\n  final -> {dst}")
     record(man, skey(a, "finetune"), weights=str(dst), run=best, teacher=str(teacher),
