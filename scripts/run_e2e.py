@@ -19,6 +19,7 @@ Mac dinh dung dung cong thuc da tao ra ket qua trong bai (run cwd_t9):
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "pruning"))
+
+# Fork nay KHONG duoc pip install, chi import duoc qua sys.path. DDP cua Ultralytics
+# sinh tien trinh con chay mot file tam trong /root/.config/Ultralytics/DDP/ nen
+# sys.path[0] cua no la thu muc do -> "No module named 'ultralytics'".
+# PYTHONPATH di theo os.environ xuong moi tien trinh con, ke ca torch.distributed.run.
+os.environ["PYTHONPATH"] = os.pathsep.join(
+    x for x in (str(ROOT), os.environ.get("PYTHONPATH", "")) if x
+)
 
 MANIFEST = ROOT / "results" / "e2e_manifest.json"
 STAGES = ["baseline", "prune", "finetune", "val", "export", "bench"]
