@@ -14,7 +14,7 @@ Nhược điểm:
 - Kém hơn Taylor và BN gamma (sau SR) trong thực nghiệm
 
 Usage:
-    python pruning/prune_l1norm.py --weights weights/yolo26m_l1norm_div8 --cfg cfg/yolo26m.yaml --prune-ratio 0.13
+    python pruning/prune_l1norm.py --weights weights/yolo26l_baseline.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.5 --model-size l
 """
 
 import argparse

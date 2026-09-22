@@ -131,3 +131,31 @@ cfg: # (str, optional) path to a config.yaml that overrides defaults
 
 # Tracker settings ------------------------------------------------------------------------------------------------------
 tracker: botsort.yaml # (str) tracker config file: botsort.yaml or bytetrack.yaml
+
+# Pruning + Distillation (fork) -----------------------------------------------------------------------------------------
+# Cac tham so nay PHAI nam trong default.yaml de lot vao trainer.args.
+# Ly do: ultralytics/utils/dist.py:generate_ddp_file() chi serialize vars(trainer.args)
+# sang tien trinh con DDP. Truoc day chung chi duoc gan len object trainer nen tien
+# trinh con mat sach -> kd_enabled=False -> train khong he co distillation ma khong bao loi.
+sr: # (float, optional) L1 penalty tren BN gamma. None/0 = tat (DEPRECATED)
+finetune: False # (bool) build DetectionModelPruned tu maskbndict trong checkpoint
+dms: False # (bool) bat Differentiable Model Scaling
+dms_target: 0.3 # (float) ti le pruning muc tieu
+dms_lambda: 1.0 # (float) trong so resource loss
+dms_lr: 0.00002 # (float) learning rate cho a params
+dms_taylor_type: taylor # (str) taylor, snip, fisher
+dms_decay_ratio: 1 # (float) ti le epochs cho progressive target
+dms_grad_scale: -1.0 # (float) -1 = tat gradient normalization
+kd: False # (bool) bat knowledge distillation
+kd_teacher: # (str, optional) duong dan teacher model
+kd_lambda: 0.5 # (float) trong so KD loss
+kd_method: cwd # (str) cwd, response, fitnets, mgd
+kd_layers: neck # (str) neck, backbone, all
+kd_warmup: 5 # (int) so epoch chi train detection loss truoc khi bat KD
+cwd_temperature: 9.0 # (float | str) nhiet do CWD; "learnable" de hoc tu dong
+cwd_learnable_tau_lr: 0.001 # (float) lr rieng cho tau khi learnable
+cwd_learnable_tau_init: 9.0 # (float) tau khoi tao khi learnable
+cwd_tau_reg: 0.1 # (float) regularization cho tau
+cwd_projection: False # (bool) dung 1x1 conv thay channel mask de can kenh
+mgd_mask_ratio: 0.5 # (float) ti le mask kenh cho MGD
+fitnets_normalize: True # (bool) chuan hoa feature map truoc MSE (FitNets)

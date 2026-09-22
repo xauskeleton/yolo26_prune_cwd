@@ -117,6 +117,35 @@ class BaseTrainer:
         >>> trainer.train()
     """
 
+    # Cac tham so rieng cua fork (pruning + distillation). Chung nam trong
+    # default.yaml nen luon co mat trong self.args; danh sach nay chi de "ha" chung
+    # xuong thanh attribute cua trainer.
+    CUSTOM_ARGS = (
+        "sr", "finetune",
+        "dms", "dms_target", "dms_lambda", "dms_lr",
+        "dms_taylor_type", "dms_decay_ratio", "dms_grad_scale",
+        "kd", "kd_teacher", "kd_lambda", "kd_method", "kd_layers", "kd_warmup",
+        "cwd_temperature", "cwd_learnable_tau_lr", "cwd_learnable_tau_init",
+        "cwd_tau_reg", "cwd_projection",
+        "mgd_mask_ratio", "fitnets_normalize",
+    )
+
+    def _hydrate_custom_args(self):
+        """Ha custom args tu self.args xuong attribute cua trainer.
+
+        Tien trinh con DDP duoc dung lai bang DetectionTrainer(cfg, overrides) trong
+        file tam do dist.py:generate_ddp_file() sinh ra, nen KHONG co cac attribute ma
+        engine/model.py gan truc tiep len trainer o tien trinh cha. Neu khong lay lai
+        tu args thi trainer.py:478 `getattr(self, 'kd', False)` se ra False va ca qua
+        trinh train dien ra KHONG co distillation ma khong bao loi gi.
+
+        maskbndict/kd_maskbndict khong di qua args (la dict tensor, khong serialize
+        duoc vao file tam) - chung duoc lay lai tu chinh checkpoint trong setup_model().
+        """
+        for k in self.CUSTOM_ARGS:
+            if not hasattr(self, k):
+                setattr(self, k, getattr(self.args, k, None))
+
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
         """Initialize the BaseTrainer class.
 
@@ -127,6 +156,7 @@ class BaseTrainer:
         """
         self.hub_session = overrides.pop("session", None)  # HUB
         self.args = get_cfg(cfg, overrides)
+        self._hydrate_custom_args()
         self.check_resume(overrides)
         self.device = select_device(self.args.device)
         # Update "-1" devices so post-training val does not repeat search
@@ -478,7 +508,7 @@ class BaseTrainer:
         self.kd_enabled = getattr(self, 'kd', False)
         if self.kd_enabled:
             import math as _math
-            from distillation.cwd_loss import CWDLoss, setup_hooks, build_kd_channel_masks
+            from distillation.cwd_loss import CWDLoss, setup_hooks, build_kd_channel_masks, build_projection_aligner, compute_cwd_loss_proj
             from ultralytics.nn.autobackend import AutoBackend
 
             teacher_path = getattr(self, 'kd_teacher', None)
@@ -506,8 +536,19 @@ class BaseTrainer:
             self.teacher_hooks = setup_hooks(self.teacher_model.model, self.kd_layer_names)
 
             # Build channel masks from maskbndict (if student is pruned)
+            self._cwd_use_projection = getattr(self, 'cwd_projection', False)
             maskbndict = getattr(self, 'kd_maskbndict', None)
-            if maskbndict is not None:
+            if self._cwd_use_projection:
+                # Projection mode: use 1x1 conv to align teacher → student
+                self.kd_channel_masks = {}
+                self.kd_projection = build_projection_aligner(
+                    self.student_hooks, self.teacher_hooks,
+                    unwrap_model(self.model), self.teacher_model.model,
+                    self.kd_layer_names, self.device,
+                )
+                n_proj = sum(1 for _ in self.kd_projection.projections.values())
+                LOGGER.info(f"[KD] Projection alignment: {n_proj} layers with 1x1 conv")
+            elif maskbndict is not None:
                 self.kd_channel_masks = build_kd_channel_masks(maskbndict, layer_indices)
                 LOGGER.info(f"[KD] Channel masks: {len(self.kd_channel_masks)} layers have mismatch")
             else:
@@ -569,6 +610,13 @@ class BaseTrainer:
             else:
                 raise ValueError(f"Unknown kd_method: {self._kd_method}. "
                                  f"Choose from: cwd, response, fitnets, mgd")
+
+            # Projection optimizer (separate from main optimizer)
+            if self._cwd_use_projection and hasattr(self, 'kd_projection'):
+                self._proj_optimizer = torch.optim.Adam(
+                    self.kd_projection.parameters(), lr=1e-3
+                )
+                LOGGER.info(f"[KD] Projection optimizer: Adam lr=1e-3")
 
             LOGGER.info(f"[KD] ENABLED: method={self._kd_method}, teacher={teacher_path}, lambda={self._kd_lambda}")
             temp_info = f"learnable (init={getattr(self, 'cwd_learnable_tau_init', 9.0)})" if self.cwd_temp_mode == "learnable" else self.cwd_temp_mode
@@ -716,12 +764,20 @@ class BaseTrainer:
                                 # Dispatch theo kd_method
                                 kd_method = getattr(self, '_kd_method', 'cwd')
                                 if kd_method == "cwd":
-                                    from distillation.cwd_loss import compute_cwd_loss
-                                    kd_loss_val = compute_cwd_loss(
-                                        self.student_hooks, self.teacher_hooks,
-                                        self.kd_criterion, self.kd_channel_masks,
-                                        temperature=tau,
-                                    )
+                                    if getattr(self, '_cwd_use_projection', False):
+                                        from distillation.cwd_loss import compute_cwd_loss_proj
+                                        kd_loss_val = compute_cwd_loss_proj(
+                                            self.student_hooks, self.teacher_hooks,
+                                            self.kd_criterion, self.kd_projection,
+                                            temperature=tau,
+                                        )
+                                    else:
+                                        from distillation.cwd_loss import compute_cwd_loss
+                                        kd_loss_val = compute_cwd_loss(
+                                            self.student_hooks, self.teacher_hooks,
+                                            self.kd_criterion, self.kd_channel_masks,
+                                            temperature=tau,
+                                        )
                                 elif kd_method == "response":
                                     from distillation.kd_losses import compute_response_kd_loss
                                     kd_loss_val = compute_response_kd_loss(
@@ -1199,6 +1255,16 @@ class BaseTrainer:
         maskbndict = None
         if getattr(self, 'finetune', False) and ckpt is not None:
             maskbndict = ckpt.get('maskbndict', None) or getattr(self, 'maskbndict', None)
+        # DDP: tien trinh con khong duoc model.py gan kd_maskbndict (dict tensor khong
+        # di qua args duoc). Lay thang tu checkpoint cua student, neu khong thi
+        # trainer.py:510 se thay None -> kd_channel_masks rong -> CWD lech kenh.
+        if ckpt is not None:
+            _mask = ckpt.get('maskbndict', None)
+            if _mask is not None:
+                if getattr(self, 'maskbndict', None) is None:
+                    self.maskbndict = _mask
+                if getattr(self, 'kd_maskbndict', None) is None:
+                    self.kd_maskbndict = _mask
         self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK == -1, maskbndict=maskbndict)
         return ckpt
 
@@ -1310,6 +1376,11 @@ class BaseTrainer:
         if getattr(self, '_kd_method', None) == 'mgd' and hasattr(self, '_mgd_optimizer'):
             self._mgd_optimizer.step()
             self._mgd_optimizer.zero_grad()
+
+        # CWD projection optimizer step
+        if getattr(self, '_cwd_use_projection', False) and hasattr(self, '_proj_optimizer'):
+            self._proj_optimizer.step()
+            self._proj_optimizer.zero_grad()
 
         # CWD learnable tau optimizer step
         if getattr(self, 'cwd_temp_mode', None) == "learnable" and hasattr(self, 'cwd_tau_optimizer'):

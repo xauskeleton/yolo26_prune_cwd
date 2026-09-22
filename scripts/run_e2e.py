@@ -225,18 +225,20 @@ def stage_finetune(a, man):
     banner(f"STAGE 3/6  FINETUNE + {a.kd_method.upper()}  ({a.epochs} epoch)")
     from ultralytics import YOLO
 
-    # DDP KHONG dung duoc voi pipeline nay.
-    # ultralytics/utils/dist.py:generate_ddp_file() chi serialize vars(trainer.args),
-    # trong khi model.py gan finetune/kd/kd_teacher/maskbndict thang len OBJECT trainer
-    # (khong nam trong args, khong co trong default.yaml). Tien trinh con DDP dung lai
-    # trainer tu args -> trainer.py:478 `self.kd_enabled = getattr(self, 'kd', False)`
-    # thanh False -> train 100 epoch KHONG he co CWD ma KHONG bao loi gi.
+    # DDP chi an toan khi fork da dua custom args vao default.yaml.
+    # dist.py:generate_ddp_file() chi serialize vars(trainer.args); neu kd/finetune
+    # khong nam trong args thi tien trinh con se co kd_enabled=False va train 100
+    # epoch KHONG he co distillation ma khong bao loi gi. Kiem tra truoc khi chay.
     if a.kd_method != "none" and isinstance(a.device, (list, tuple)):
-        raise SystemExit(
-            "!! device={} (DDP) + kd={} => CWD se bi TAT AM THAM trong tien trinh con.\n"
-            "   Dung --device 0 (mot GPU). Xem ultralytics/utils/dist.py:generate_ddp_file."
-            .format(a.device, a.kd_method)
-        )
+        from ultralytics.utils import DEFAULT_CFG
+        thieu = [k for k in ("kd", "kd_teacher", "finetune", "cwd_temperature")
+                 if not hasattr(DEFAULT_CFG, k)]
+        if thieu:
+            raise SystemExit(
+                "!! Fork nay chua co {} trong ultralytics/cfg/default.yaml." + chr(10) +
+                "   DDP se lam MAT CWD am tham. Cap nhat repo, hoac chay --device 0."
+                .format(", ".join(thieu))
+            )
 
     pruned = a.pruned_weights or need(man, skey(a, "prune"), "weights")
     teacher = a.teacher_weights or need(man, "baseline", "weights")

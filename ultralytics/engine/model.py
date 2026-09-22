@@ -791,6 +791,7 @@ class Model(torch.nn.Module):
         cwd_learnable_tau_init = args.pop("cwd_learnable_tau_init", 9.0)
         cwd_tau_reg = args.pop("cwd_tau_reg", 0.1)
         kd_method = args.pop("kd_method", "cwd")
+        cwd_projection = args.pop("cwd_projection", False)
         mgd_mask_ratio = args.pop("mgd_mask_ratio", 0.5)
         fitnets_normalize = args.pop("fitnets_normalize", True)
         # ==================== Pop custom args ====================
@@ -848,6 +849,28 @@ class Model(torch.nn.Module):
                 del _ckpt  # free memory
         # ==================== Resume: restore custom args tu checkpoint ====================
 
+        # ==================== Dua custom args NGUOC lai vao overrides ====================
+        # Phai nam trong trainer.args thi DDP moi mang sang tien trinh con duoc:
+        # dist.py:generate_ddp_file() chi serialize vars(trainer.args). Neu chi gan len
+        # object trainer (doan ben duoi) thi con se mat sach -> train khong co KD.
+        # maskbndict KHONG dua vao day: la dict tensor, khong serialize duoc vao file
+        # tam; tien trinh con lay lai tu checkpoint trong trainer.setup_model().
+        args.update(
+            sr=sr,
+            finetune=finetune,
+            dms=dms, dms_target=dms_target, dms_lambda=dms_lambda, dms_lr=dms_lr,
+            dms_taylor_type=dms_taylor_type, dms_decay_ratio=dms_decay_ratio,
+            dms_grad_scale=dms_grad_scale,
+            kd=kd, kd_teacher=kd_teacher, kd_lambda=kd_lambda, kd_method=kd_method,
+            kd_layers=kd_layers, kd_warmup=kd_warmup,
+            cwd_temperature=cwd_temperature,
+            cwd_learnable_tau_lr=cwd_learnable_tau_lr,
+            cwd_learnable_tau_init=cwd_learnable_tau_init,
+            cwd_tau_reg=cwd_tau_reg, cwd_projection=cwd_projection,
+            mgd_mask_ratio=mgd_mask_ratio, fitnets_normalize=fitnets_normalize,
+        )
+        # ==================== Dua custom args NGUOC lai vao overrides ====================
+
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
 
         # ==================== Gan custom args vao trainer ====================
@@ -870,6 +893,7 @@ class Model(torch.nn.Module):
         self.trainer.cwd_learnable_tau_init = cwd_learnable_tau_init
         self.trainer.cwd_tau_reg = cwd_tau_reg
         self.trainer.kd_method = kd_method
+        self.trainer.cwd_projection = cwd_projection
         self.trainer.mgd_mask_ratio = mgd_mask_ratio
         self.trainer.fitnets_normalize = fitnets_normalize
         self.trainer.finetune = finetune

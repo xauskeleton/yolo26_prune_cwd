@@ -109,6 +109,72 @@ def build_kd_channel_masks(maskbndict: Dict[str, torch.Tensor], layer_indices: L
     return masks
 
 
+class ProjectionAligner(nn.Module):
+    """1x1 conv projection layers to align teacher channels → student channels."""
+
+    def __init__(self, channel_pairs: Dict[str, tuple]):
+        """
+        Args:
+            channel_pairs: Dict mapping layer name → (teacher_channels, student_channels)
+        """
+        super().__init__()
+        self.projections = nn.ModuleDict()
+        for name, (t_ch, s_ch) in channel_pairs.items():
+            # Replace '.' with '_' for nn.ModuleDict key compatibility
+            key = name.replace('.', '_')
+            self.projections[key] = nn.Conv2d(t_ch, s_ch, kernel_size=1, bias=False)
+        # Init with kaiming
+        for m in self.projections.values():
+            nn.init.kaiming_normal_(m.weight, mode='fan_out')
+
+    def project(self, name: str, feat: torch.Tensor) -> torch.Tensor:
+        key = name.replace('.', '_')
+        if key in self.projections:
+            return self.projections[key](feat)
+        return feat
+
+
+def build_projection_aligner(
+    student_hooks: Dict[str, FeatureHook],
+    teacher_hooks: Dict[str, FeatureHook],
+    model: nn.Module,
+    teacher_model: nn.Module,
+    layer_names: List[str],
+    device: torch.device,
+) -> ProjectionAligner:
+    """
+    Build ProjectionAligner by running a dummy forward to get channel dims.
+
+    Args:
+        student_hooks, teacher_hooks: registered hooks
+        model: student model
+        teacher_model: teacher model
+        layer_names: hooked layer names
+        device: torch device
+
+    Returns:
+        ProjectionAligner on device
+    """
+    # Dummy forward to populate hooks
+    dummy = torch.randn(1, 3, 640, 640, device=device)
+    with torch.no_grad():
+        model(dummy)
+        teacher_model(dummy)
+
+    channel_pairs = {}
+    for name in layer_names:
+        s_feat = student_hooks[name].features if name in student_hooks else None
+        t_feat = teacher_hooks[name].features if name in teacher_hooks else None
+        if s_feat is not None and t_feat is not None:
+            t_ch = t_feat.shape[1]
+            s_ch = s_feat.shape[1]
+            if t_ch != s_ch:
+                channel_pairs[name] = (t_ch, s_ch)
+
+    aligner = ProjectionAligner(channel_pairs).to(device)
+    return aligner
+
+
 def compute_cwd_loss(
     student_hooks: Dict[str, FeatureHook],
     teacher_hooks: Dict[str, FeatureHook],
@@ -145,6 +211,44 @@ def compute_cwd_loss(
             t_feat = t_feat[:, mask, :, :]
 
         # Spatial size mismatch → interpolate teacher to match student
+        if s_feat.shape[2:] != t_feat.shape[2:]:
+            t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False)
+
+        loss = loss + criterion(s_feat, t_feat, temperature)
+        count += 1
+
+    if count == 0:
+        return torch.tensor(0.0, requires_grad=True)
+
+    return loss / count
+
+
+def compute_cwd_loss_proj(
+    student_hooks: Dict[str, FeatureHook],
+    teacher_hooks: Dict[str, FeatureHook],
+    criterion: CWDLoss,
+    projection: ProjectionAligner,
+    temperature: float,
+) -> torch.Tensor:
+    """
+    Compute CWD loss with projection layer alignment (instead of mask).
+
+    Teacher features are projected via 1x1 conv to match student channels.
+    """
+    loss = 0.0
+    count = 0
+
+    for name in student_hooks:
+        s_feat = student_hooks[name].features
+        t_feat = teacher_hooks[name].features
+
+        if s_feat is None or t_feat is None:
+            continue
+
+        # Project teacher channels → student channels via 1x1 conv
+        t_feat = projection.project(name, t_feat)
+
+        # Spatial size mismatch → interpolate
         if s_feat.shape[2:] != t_feat.shape[2:]:
             t_feat = F.interpolate(t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False)
 
