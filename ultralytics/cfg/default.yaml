@@ -159,3 +159,9 @@ cwd_tau_reg: 0.1 # (float) regularization cho tau
 cwd_projection: False # (bool) dung 1x1 conv thay channel mask de can kenh
 mgd_mask_ratio: 0.5 # (float) ti le mask kenh cho MGD
 fitnets_normalize: True # (bool) chuan hoa feature map truoc MSE (FitNets)
+
+# Ngan sach thoi gian cho mot phien -------------------------------------------------------------------------------------
+# Dung train sau N gio roi luu last.pt, KHONG doi self.epochs.
+# Khac 'time': 'time' tinh lai epochs cho vua thoi gian nen pha lich LR;
+# 'stop_after_h' giu nguyen epochs=100, chi cat ngang de vua phien Kaggle 12h.
+stop_after_h: # (float, optional) vd 10.0

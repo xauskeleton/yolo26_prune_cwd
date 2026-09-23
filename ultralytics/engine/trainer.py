@@ -988,6 +988,19 @@ class BaseTrainer:
                 if self.args.time:
                     self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
 
+                # Ngan sach gio cho MOT phien (vd Kaggle gioi han 12h).
+                # Khac args.time o cho KHONG ghi de self.epochs (doan duoi: args.time
+                # tinh lai epochs cho vua thoi gian -> pha lich LR). O day epochs van
+                # la 100, chi dung som va luu last.pt; phien sau resume chay tiep.
+                # Muc dich: tu dung TRUOC khi Kaggle giet phien de output kip luu.
+                _budget = getattr(self.args, "stop_after_h", None)
+                if _budget and (time.time() - self.train_time_start) > float(_budget) * 3600:
+                    LOGGER.info(
+                        f"Het ngan sach {_budget}h cua phien -> dung o epoch {epoch + 1}/"
+                        f"{self.epochs}, luu last.pt de phien sau resume."
+                    )
+                    self.stop = True
+
                 # Save model
                 if self.args.save or final_epoch:
                     self.save_model()

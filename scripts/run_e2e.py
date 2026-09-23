@@ -167,7 +167,7 @@ def stage_baseline(a, man):
 
     kw = dict(data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
               device=a.device, seed=a.seed, project=a.project, name="baseline",
-              exist_ok=True)
+              exist_ok=True, stop_after_h=a.stop_after_h)
     run_dir = Path(a.project) / "baseline"
     model, ep = train_or_resume(a.pretrained, run_dir, kw, a.epochs)
 
@@ -245,7 +245,7 @@ def stage_finetune(a, man):
 
     kw = dict(data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
               device=a.device, seed=a.seed, project=a.project, name=f"finetune_{a.tag}",
-              exist_ok=True, finetune=True)
+              exist_ok=True, finetune=True, stop_after_h=a.stop_after_h)
     if a.kd_method != "none":
         kw.update(kd=True, kd_teacher=teacher, kd_method=a.kd_method,
                   kd_lambda=a.kd_lambda, kd_layers=a.kd_layers, kd_warmup=a.kd_warmup)
@@ -426,6 +426,9 @@ def parse_args():
     g.add_argument("--batch", type=int, default=16)
     g.add_argument("--device", default="0", help='"0" mot GPU, "0,1" dung DDP 2 GPU')
     g.add_argument("--seed", type=int, default=0)
+    g.add_argument("--stop-after-h", type=float, default=10.0,
+                   help="Dung train sau N gio va luu last.pt (phien Kaggle toi da 12h). "
+                        "epochs KHONG doi, phien sau resume chay tiep. 0 = tat.")
 
     g = p.add_argument_group("prune")
     g.add_argument("--prune-ratio", type=float, default=0.5)
