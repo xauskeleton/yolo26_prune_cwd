@@ -103,16 +103,33 @@ def done_epochs(run_dir):
     cat ngang van de lai best.pt cua epoch dang do, va no se bi ghi nhan nham
     thanh ket qua cuoi.
     """
-    csv = Path(run_dir) / "results.csv"
-    if not csv.exists():
-        return 0
-    try:
-        import pandas as pd
-        df = pd.read_csv(csv)
-        df.columns = df.columns.str.strip()
-        return int(df["epoch"].max()) if len(df) and "epoch" in df else 0
-    except Exception:
-        return 0
+    run_dir = Path(run_dir)
+    csv = run_dir / "results.csv"
+    if csv.exists():
+        try:
+            import pandas as pd
+            df = pd.read_csv(csv)
+            df.columns = df.columns.str.strip()
+            if len(df) and "epoch" in df:
+                return int(df["epoch"].max())
+        except Exception:
+            pass
+
+    # Khong co results.csv (vd chi tai moi last.pt ve tu mot version bi failed):
+    # so epoch nam ngay trong checkpoint. Khong bat nguoi dung phai co du file.
+    last = run_dir / "weights" / "last.pt"
+    if last.exists():
+        try:
+            import torch
+            ck = torch.load(last, map_location="cpu", weights_only=False)
+            ep = int(ck.get("epoch", -1))
+            total = int((ck.get("train_args") or {}).get("epochs", 0) or 0)
+            del ck
+            # Ultralytics ghi epoch = -1 khi train da ket thuc han.
+            return (ep + 1) if ep >= 0 else total
+        except Exception:
+            pass
+    return 0
 
 
 def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
@@ -127,7 +144,10 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
     last = run_dir / "weights" / "last.pt"
     done = done_epochs(run_dir)
 
-    if last.exists() and (run_dir / "args.yaml").exists() and 0 < done < epochs:
+    # Chi can last.pt: Ultralytics doc lai toan bo args tu trong checkpoint
+    # (trainer.py:1530 ckpt_args = load_checkpoint(last)[0].args), khong dung
+    # args.yaml. Doi hoi them file la lam kho nguoi resume thu cong.
+    if last.exists() and 0 < done < epochs:
         print(f"  -> RESUME tu {last}  (da co {done}/{epochs} epoch)")
         m = (build or YOLO)(str(last))
         try:
@@ -146,7 +166,7 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
         return (build or YOLO)(str(run_dir / "weights" / "best.pt")), done
 
     if done:
-        print(f"  (co {done} epoch cu nhung thieu last.pt/args.yaml -> train lai tu dau)")
+        print(f"  (co {done} epoch cu nhung thieu last.pt -> train lai tu dau)")
     m = (build or YOLO)(str(spec_weights))
     m.train(**kw)
     return m, done_epochs(run_dir)
