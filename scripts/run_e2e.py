@@ -293,7 +293,12 @@ def stage_val(a, man):
     if a.val_weights:
         targets = [(Path(w).stem, w) for w in a.val_weights]
     if not targets:
-        raise SystemExit("!! Khong co checkpoint nao de val. Chay stage baseline/finetune truoc.")
+        # Truong hop binh thuong: finetune vua dung som do het ngan sach gio nen
+        # chua ghi vao manifest. KHONG raise - phai thoat ma 0 de notebook Kaggle
+        # ket thuc BINH THUONG va output duoc luu, neu khong thi mat ca phien.
+        print("  Chua co checkpoint nao de val (finetune chua du epoch).")
+        print("  -> Chay lai notebook, nho Add Data output lan nay de train tiep.")
+        return
 
     out = {}
     for tag, w in targets:
