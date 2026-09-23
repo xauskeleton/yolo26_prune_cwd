@@ -280,6 +280,65 @@ Finetune: finetune=True, kd=True, kd_method=cwd, kd_teacher=yolo26m_baseline.pt,
 | yolo11m (DDP 2xT4) | 5.88 | 9.80h |
 | yolo26m baseline (run cu) | 16.5 | 27.5h |
 | Ours pruned + CWD (run cu) | 13.0 | 21.7h |
+| Ours pruned + CWD (r60, 2xT4 DDP) | 10.0 | 16.7h |
+| Ours pruned + CWD (r70, 2xT4 DDP) | 9.9 | 16.6h |
+
+## Quet ti le pruning (VOC, L1-norm uniform + CWD tau=9)
+
+Moi ti le mot notebook trong `notebooks/share_ratio/`, cung baseline, cung
+config, chi khac `--prune-ratio`. Do tren VOC2007 test (4952 anh).
+
+| Ratio | Params (M) | GFLOPs | AP50 | AP50-95 | So voi baseline | AP50/MParam |
+|---|---:|---:|---:|---:|---:|---:|
+| 0% (baseline) | 21.80 | 74.9 | 89.04 | — | — | 4.08 |
+| 30% | | | | | | |
+| 40% | | | | | | |
+| 50% | 7.50 | 23.6 | 87.96 | — | -1.08 | 11.73 |
+| 60% | 5.87 | 18.3 | 86.78 | 68.69 | -2.26 | 14.78 |
+| 70% | 4.18 | 12.4 | 84.98 | 66.42 | -4.06 | 20.33 |
+
+Xong 60% va 70% (23/09). Con 30%, 40% (dang train tiep tu 60/59 epoch) va 50%
+(chay lai de doi chieu voi con so 87.96 cua run cu `cwd_t9`).
+
+### Diem gay cua duong cong
+
+| Doan | AP50 mat | GFLOPs tiet kiem | AP50 mat / GFLOPs |
+|---|---:|---:|---:|
+| 0% -> 50% | 1.08 | 51.3 | 0.021 |
+| 50% -> 60% | 1.18 | 5.3 | 0.22 |
+| 60% -> 70% | 1.80 | 5.9 | 0.31 |
+
+Doan dau gan nhu mien phi: bo 68% GFLOPs chi mat 1.08 diem. Tu 50% tro di gia
+phai tra tang gap 10 lan, va tu 60% tro di tang tiep 40%. **Diem gay nam trong
+khoang 50-60%** — do la ly do chon 50% lam cau hinh de xuat.
+
+### Lop nao chiu thiet khi cat sau
+
+AP50 per-class, 60% so voi 70%:
+
+| Lop | 60% | 70% | Chenh |
+|---|---:|---:|---:|
+| chair | 72.5 | 69.4 | -3.1 |
+| bottle | 79.1 | 76.1 | -3.0 |
+| diningtable | 83.4 | 78.5 | -4.9 |
+| sofa | 82.1 | 81.4 | -0.7 |
+| pottedplant | 62.7 | 62.3 | -0.4 |
+| car | 93.9 | 93.1 | -0.8 |
+| person | 90.8 | 89.3 | -1.5 |
+
+Nhom object nho / bi che khuat (chair, bottle, diningtable) mat nhieu nhat.
+pottedplant von da thap o moi ti le nen khong con gi de mat them.
+
+### So voi cong trinh gan nhat
+
+arXiv 2509.12918 (BN-gamma pruning + CWD tren YOLOv8m/VisDrone) dat **-73.51%
+params voi -2.7 mAP50**. Muc nen tuong duong cua ta la ratio 60%: **-73.1%
+params voi -2.26 AP50**.
+
+> Hai con so nay **khong so sanh truc tiep duoc** — khac dataset (VOC vs
+> VisDrone) va khac backbone (YOLOv26m vs YOLOv8m). Chi dung de dinh vi rang
+> pipeline cua ta nam cung hang, chua phai bang chung vuot troi. Muon so truc
+> tiep thi phai co bang VisDrone (xem muc duoi).
 
 ## VisDrone2019-DET (bang phu, dang chay)
 
@@ -309,6 +368,9 @@ hon), co khao sat do nhay tau, va do that tren Jetson Nano.
 
 **Da du 10/10 dong.** Tat ca 8 doi chung deu train 100 epoch tren Kaggle 2xT4 (DDP),
 moi model mot notebook (`notebooks/share8/nb1..nb8`), khong con model nao phai chay.
+
+Quet ti le pruning: **2/5 xong** (60%, 70%). Con 30%, 40% dang train tiep
+va 50% chay lai de doi chieu.
 
 Con thieu (khong chan viec lap bang):
 

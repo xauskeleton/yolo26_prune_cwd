@@ -165,8 +165,12 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
             print("     (khong doc duoc so epoch tu results.csv lan checkpoint,"
                   " van resume chu KHONG train lai tu dau)")
         m = (build or YOLO)(str(last))
+        # Resume thay TOAN BO args bang args trong checkpoint (trainer.check_resume),
+        # chi giu lai mot danh sach khoa duoc phep ghi de. stop_after_h la ngan sach
+        # gio cua PHIEN chu khong phai cua lan train, nen phai truyen lai moi lan -
+        # neu khong, lan resume mat auto-stop va phien phai cho notebook giet cung.
         try:
-            m.train(resume=True)
+            m.train(resume=True, stop_after_h=kw.get("stop_after_h"))
         except Exception as exc:
             # Ultralytics tu choi resume mot run da ket thuc (vd early stop).
             # Khi do coi nhu xong o so epoch dang co, dung best.pt.

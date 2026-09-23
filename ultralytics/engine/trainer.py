@@ -1545,6 +1545,10 @@ class BaseTrainer:
                     "cache",
                     "patience",
                     "time",
+                    "stop_after_h",  # ngan sach gio cua PHIEN, khong phai cua lan train:
+                    # resume thay toan bo args bang args trong checkpoint, neu khong
+                    # liet ke o day thi lan resume mat auto-stop va phai trong cho
+                    # HARD_LIMIT_H trong notebook giet cung.
                     "freeze",
                     "val",
                     "plots",
