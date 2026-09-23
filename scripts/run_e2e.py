@@ -74,10 +74,18 @@ def need(man, stage, key):
     return val
 
 
+def dkey(a):
+    """Hau to theo dataset. Baseline gan chat voi dataset (khac nc, khac anh) nen
+    khong the dung chung giua VOC va VisDrone. VOC giu nguyen ten cu de khong pha
+    manifest / weights da sinh ra truoc do."""
+    stem = Path(a.data).stem
+    return "" if stem == "VOC" else f"_{stem}"
+
+
 def skey(a, stage):
-    """Key trong manifest. baseline dung chung cho moi ratio; cac stage con lai
-    phai tach theo tag, neu khong quet nhieu ratio se ghi de len nhau."""
-    return stage if stage == "baseline" else f"{stage}@{a.tag}"
+    """Key trong manifest. baseline dung chung cho moi ratio TREN CUNG DATASET;
+    cac stage con lai phai tach theo tag, neu khong quet nhieu ratio se ghi de."""
+    return "baseline" + dkey(a) if stage == "baseline" else f"{stage}@{a.tag}"
 
 
 def banner(title):
@@ -192,9 +200,10 @@ def stage_baseline(a, man):
     from ultralytics import YOLO
 
     kw = dict(data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
-              device=a.device, seed=a.seed, project=a.project, name="baseline",
+              device=a.device, seed=a.seed, project=a.project,
+              name="baseline" + dkey(a),
               exist_ok=True, stop_after_h=a.stop_after_h)
-    run_dir = Path(a.project) / "baseline"
+    run_dir = Path(a.project) / ("baseline" + dkey(a))
     model, ep = train_or_resume(a.pretrained, run_dir, kw, a.epochs)
 
     if ep < a.epochs:
@@ -205,11 +214,11 @@ def stage_baseline(a, man):
     if not Path(best).exists():
         raise SystemExit("!! Train baseline xong nhung khong tim thay best.pt")
 
-    dst = ROOT / "weights" / f"yolo26{a.model_size}_baseline.pt"
+    dst = ROOT / "weights" / f"yolo26{a.model_size}_baseline{dkey(a)}.pt"
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best, dst)
     print(f"\n  baseline -> {dst}")
-    record(man, "baseline", weights=str(dst), run=best, epochs=a.epochs)
+    record(man, skey(a, "baseline"), weights=str(dst), run=best, epochs=a.epochs)
     free_gpu()
 
 
@@ -219,7 +228,7 @@ def stage_prune(a, man):
     from prune_common import create_masks, finalize_pruning, load_and_prepare
     from prune_l1norm import compute_l1norm_importance
 
-    src = a.baseline_weights or need(man, "baseline", "weights")
+    src = a.baseline_weights or need(man, skey(a, "baseline"), "weights")
     model, bn_dict, ignore_bn_list, _chunk, layer_ratio_cfg, pruned_yaml = \
         load_and_prepare(src, a.cfg, a.model_size, a.layer_ratio)
 
@@ -267,7 +276,7 @@ def stage_finetune(a, man):
             )
 
     pruned = a.pruned_weights or need(man, skey(a, "prune"), "weights")
-    teacher = a.teacher_weights or need(man, "baseline", "weights")
+    teacher = a.teacher_weights or need(man, skey(a, "baseline"), "weights")
 
     kw = dict(data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
               device=a.device, seed=a.seed, project=a.project, name=f"finetune_{a.tag}",
@@ -312,8 +321,8 @@ def stage_val(a, man):
     from ultralytics import YOLO
 
     targets = []
-    if man.get("baseline", {}).get("weights"):
-        targets.append(("baseline", man["baseline"]["weights"]))
+    if man.get(skey(a, "baseline"), {}).get("weights"):
+        targets.append(("baseline", man[skey(a, "baseline")]["weights"]))
     if man.get(skey(a, "finetune"), {}).get("weights"):
         targets.append(("pruned", man[skey(a, "finetune")]["weights"]))
     if a.val_weights:
