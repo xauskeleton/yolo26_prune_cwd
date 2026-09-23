@@ -135,8 +135,10 @@ def done_epochs(run_dir):
 def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
     """Train moi, hoac train TIEP tu last.pt neu phien truoc bi cat ngang.
 
-    Kaggle gioi han 12h/phien con 100 epoch mat ~10h, nen truong hop bi cat la
-    binh thuong. Khong co nhanh resume nay thi moi phien deu bat dau lai tu 0.
+    Nguyen tac: HE CO last.pt LA RESUME. Khong lay so epoch doc duoc lam dieu
+    kien, vi neu doc that bai (vd torch.load loi) thi se am tham train lai tu
+    dau - mat ca chuc gio ma khong bao gi. Ultralytics tu doc epoch trong
+    checkpoint, khong can minh dem ho.
     """
     from ultralytics import YOLO
 
@@ -144,29 +146,33 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
     last = run_dir / "weights" / "last.pt"
     done = done_epochs(run_dir)
 
-    # Chi can last.pt: Ultralytics doc lai toan bo args tu trong checkpoint
-    # (trainer.py:1530 ckpt_args = load_checkpoint(last)[0].args), khong dung
-    # args.yaml. Doi hoi them file la lam kho nguoi resume thu cong.
-    if last.exists() and 0 < done < epochs:
-        print(f"  -> RESUME tu {last}  (da co {done}/{epochs} epoch)")
+    if last.exists():
+        if 0 < epochs <= done:
+            print(f"  -> da du {done}/{epochs} epoch, bo qua train")
+            best = run_dir / "weights" / "best.pt"
+            return (build or YOLO)(str(best if best.exists() else last)), done
+
+        print(f"  -> RESUME tu {last}  (da co {done if done else '?'}/{epochs} epoch)")
+        if not done:
+            print("     (khong doc duoc so epoch tu results.csv lan checkpoint,"
+                  " van resume chu KHONG train lai tu dau)")
         m = (build or YOLO)(str(last))
         try:
             m.train(resume=True)
         except Exception as exc:
-            # Ultralytics tu choi resume mot run da ket thuc (vd early stop do patience).
-            # Khi do coi nhu xong o so epoch dang co, dung best.pt, KHONG train lai tu dau.
+            # Ultralytics tu choi resume mot run da ket thuc (vd early stop).
+            # Khi do coi nhu xong o so epoch dang co, dung best.pt.
             if "finished" in str(exc).lower() or "nothing to resume" in str(exc).lower():
                 print(f"  (run da ket thuc som o epoch {done}: {exc})")
-                return (build or YOLO)(str(run_dir / "weights" / "best.pt")), done
+                best = run_dir / "weights" / "best.pt"
+                return (build or YOLO)(str(best if best.exists() else last)), done
             raise
-        return m, done
-
-    if done >= epochs:
-        print(f"  -> da du {done}/{epochs} epoch, bo qua train")
-        return (build or YOLO)(str(run_dir / "weights" / "best.pt")), done
+        # Phai dem LAI sau khi train: tra ve 'done' cu thi mot phien chay het
+        # 100 epoch van bi coi la chua xong va khong duoc ghi vao manifest.
+        return m, done_epochs(run_dir)
 
     if done:
-        print(f"  (co {done} epoch cu nhung thieu last.pt -> train lai tu dau)")
+        print(f"  (co {done} epoch cu nhung KHONG co {last} -> train lai tu dau)")
     m = (build or YOLO)(str(spec_weights))
     m.train(**kw)
     return m, done_epochs(run_dir)
