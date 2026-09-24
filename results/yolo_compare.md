@@ -413,15 +413,19 @@ params voi -2.26 AP50**.
 ## VisDrone2019-DET (bang phu, dang chay)
 
 Bang thu hai, cung dinh dang main result, de chung minh pipeline khong chi hop
-voi PASCAL VOC. Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot model
-(yolo26m baseline, Ours, yolov8m, yolo11m).
+voi PASCAL VOC. Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size
+(n / s / m / l), moi cai lam tron baseline + Ours cua size do.
 
 | Model | Params (M) | AP50 | AP50-95 |
 |---|---:|---:|---:|
-| yolov8m | | | |
-| yolo11m | | | |
-| yolo26m (baseline) | | | |
-| **Ours (prune 50% + CWD)** | | | |
+| YOLO26-N | | | |
+| Ours-N | | | |
+| YOLO26-S | | | |
+| Ours-S | | | |
+| YOLO26-M | | | |
+| Ours-M | | | |
+| YOLO26-L | | | |
+| Ours-L | | | |
 
 Setup: 6471 train / 548 val, 10 lop, imgsz 640, 100 epoch, Kaggle T4 x2 (DDP),
 prune 50% L1-norm div8, CWD tau=9 kd_layers=neck kd_warmup=5.
