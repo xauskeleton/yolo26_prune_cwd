@@ -41,8 +41,9 @@ Tien do: **10/10 dong — DA DU**.
 <details><summary>Ban LaTeX</summary>
 
 ```latex
-egin{tabular}{lrr}
-	oprule
+\begin{tabular}{lrr}
+
+\toprule
 Model & AP@0.5 & GFLOPs \\
 \midrule
 RT-DETR-L & 88.09 & 110.0 \\
@@ -54,8 +55,8 @@ YOLO12-M & 88.27 & 71.1 \\
 YOLO11-M & 87.41 & 68.4 \\
 YOLOv5-Mu & 87.24 & 64.4 \\
 YOLOv10-M & 88.28 & 64.2 \\
-	extbf{Ours} & 	extbf{87.96} & 	extbf{23.6} \\
-ottomrule
+\textbf{Ours} & \textbf{87.96} & \textbf{23.6} \\
+\bottomrule
 \end{tabular}
 ```
 
@@ -299,8 +300,39 @@ config, chi khac `--prune-ratio`. Do tren VOC2007 test (4952 anh).
 | 60% | 5.87 | 18.3 | 86.78 | 68.69 | -2.26 | 14.78 |
 | 70% | 4.18 | 12.4 | 84.98 | 66.42 | -4.06 | 20.33 |
 
-Xong 4/5 (30, 40, 60, 70). Dong 50% van la so cua run cu `cwd_t9`, chua chay
-lai trong quet nay — con so co the xe dich chut it nhung khong doi ket luan.
+Dong 50% lay tu run `cwd_t9` (cung cau hinh, cung baseline, cung 100 epoch)
+— day la so chinh thuc dung trong bang chinh.
+
+### Bang GFLOPs - AP@0.5 (quet ti le pruning)
+
+| Ti le prune | GFLOPs | AP@0.5 |
+|---|---:|---:|
+| 0% (baseline) | 74.9 | 89.04 |
+| 30% | 42.5 | 88.09 |
+| 40% | 33.1 | 88.05 |
+| **50% (de xuat)** | **23.6** | **87.96** |
+| 60% | 18.3 | 86.78 |
+| 70% | 12.4 | 84.98 |
+
+<details><summary>Ban LaTeX</summary>
+
+```latex
+\begin{tabular}{lrr}
+\toprule
+Prune ratio & GFLOPs & AP@0.5 \\
+\midrule
+0\% (baseline) & 74.9 & 89.04 \\
+30\% & 42.5 & 88.09 \\
+40\% & 33.1 & 88.05 \\
+\textbf{50\% (de xuat)} & \textbf{23.6} & \textbf{87.96} \\
+60\% & 18.3 & 86.78 \\
+70\% & 12.4 & 84.98 \\
+\bottomrule
+\end{tabular}
+```
+
+</details>
+
 
 ### Ket qua chinh: co mot vung phang 30-50%
 
@@ -400,8 +432,8 @@ hon), co khao sat do nhay tau, va do that tren Jetson Nano.
 **Da du 10/10 dong.** Tat ca 8 doi chung deu train 100 epoch tren Kaggle 2xT4 (DDP),
 moi model mot notebook (`notebooks/share8/nb1..nb8`), khong con model nao phai chay.
 
-Quet ti le pruning: **4/5 xong** (30%, 40%, 60%, 70%). Con 50% — dang dung
-so cua run cu `cwd_t9`, nen chay lai trong cung quet de doi chieu.
+Quet ti le pruning: **xong ca 5 ti le** (30/40/50/60/70). Dong 50% dung so
+cua run `cwd_t9`, trung voi dong Ours trong bang chinh.
 
 Con thieu (khong chan viec lap bang):
 
