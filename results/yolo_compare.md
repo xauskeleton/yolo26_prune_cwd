@@ -307,8 +307,9 @@ Dong 50% lay tu run `cwd_t9` (cung cau hinh, cung baseline, cung 100 epoch)
 
 ![AP@0.5 theo GFLOPs](flops_ap50.png)
 
-*Sinh boi `tools/plot_flops_ap50.py`. Truc x dao chieu: sang phai la nen
-cang manh. Vung phang 30-50% roi gay dot ngot sau 50%.*
+*Sinh boi `tools/plot_flops_ap50.py`. Huong tot la tren-trai. Duong xanh la
+quet ti le cua ta, cham xam la 8 doi chung (cung 100 epoch, cung giao thuc).
+Diem 50% dac la cau hinh de xuat.*
 
 
 | Ti le prune | GFLOPs | AP@0.5 |
