@@ -305,6 +305,12 @@ Dong 50% lay tu run `cwd_t9` (cung cau hinh, cung baseline, cung 100 epoch)
 
 ### Bang GFLOPs - AP@0.5 (quet ti le pruning)
 
+![AP@0.5 theo GFLOPs](flops_ap50.png)
+
+*Sinh boi `tools/plot_flops_ap50.py`. Truc x dao chieu: sang phai la nen
+cang manh. Vung phang 30-50% roi gay dot ngot sau 50%.*
+
+
 | Ti le prune | GFLOPs | AP@0.5 |
 |---|---:|---:|
 | 0% (baseline) | 74.9 | 89.04 |
