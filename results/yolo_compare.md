@@ -280,6 +280,8 @@ Finetune: finetune=True, kd=True, kd_method=cwd, kd_teacher=yolo26m_baseline.pt,
 | yolo11m (DDP 2xT4) | 5.88 | 9.80h |
 | yolo26m baseline (run cu) | 16.5 | 27.5h |
 | Ours pruned + CWD (run cu) | 13.0 | 21.7h |
+| Ours pruned + CWD (r30, 2xT4 DDP) | 12.4 | 20.7h |
+| Ours pruned + CWD (r40, 2xT4 DDP) | 11.7 | 19.5h |
 | Ours pruned + CWD (r60, 2xT4 DDP) | 10.0 | 16.7h |
 | Ours pruned + CWD (r70, 2xT4 DDP) | 9.9 | 16.6h |
 
@@ -291,43 +293,72 @@ config, chi khac `--prune-ratio`. Do tren VOC2007 test (4952 anh).
 | Ratio | Params (M) | GFLOPs | AP50 | AP50-95 | So voi baseline | AP50/MParam |
 |---|---:|---:|---:|---:|---:|---:|
 | 0% (baseline) | 21.80 | 74.9 | 89.04 | — | — | 4.08 |
-| 30% | | | | | | |
-| 40% | | | | | | |
+| 30% | 12.67 | 42.5 | 88.09 | 71.51 | -0.95 | 6.95 |
+| 40% | 10.09 | 33.1 | 88.05 | 70.97 | -0.99 | 8.73 |
 | 50% | 7.50 | 23.6 | 87.96 | — | -1.08 | 11.73 |
 | 60% | 5.87 | 18.3 | 86.78 | 68.69 | -2.26 | 14.78 |
 | 70% | 4.18 | 12.4 | 84.98 | 66.42 | -4.06 | 20.33 |
 
-Xong 60% va 70% (23/09). Con 30%, 40% (dang train tiep tu 60/59 epoch) va 50%
-(chay lai de doi chieu voi con so 87.96 cua run cu `cwd_t9`).
+Xong 4/5 (30, 40, 60, 70). Dong 50% van la so cua run cu `cwd_t9`, chua chay
+lai trong quet nay — con so co the xe dich chut it nhung khong doi ket luan.
 
-### Diem gay cua duong cong
+### Ket qua chinh: co mot vung phang 30-50%
+
+Ba ti le 30%, 40%, 50% cho AP50 gan nhu **khong phan biet duoc**: 88.09, 88.05,
+87.96 — trai rong 0.13 diem, nho hon nhieu so voi dao dong giua cac epoch cuoi
+cua chinh mot run. Nhung so params thi khac han: 12.67M so voi 7.50M, tuc la
+**cat them 41% tham so ma khong mat gi do duoc**.
+
+Gia phai tra cho moi GFLOPs tiet kiem duoc:
 
 | Doan | AP50 mat | GFLOPs tiet kiem | AP50 mat / GFLOPs |
 |---|---:|---:|---:|
-| 0% -> 50% | 1.08 | 51.3 | 0.021 |
+| 0% -> 30% | 0.95 | 32.4 | 0.029 |
+| 30% -> 40% | 0.04 | 9.4 | **0.004** |
+| 40% -> 50% | 0.09 | 9.5 | **0.009** |
 | 50% -> 60% | 1.18 | 5.3 | 0.22 |
 | 60% -> 70% | 1.80 | 5.9 | 0.31 |
 
-Doan dau gan nhu mien phi: bo 68% GFLOPs chi mat 1.08 diem. Tu 50% tro di gia
-phai tra tang gap 10 lan, va tu 60% tro di tang tiep 40%. **Diem gay nam trong
-khoang 50-60%** — do la ly do chon 50% lam cau hinh de xuat.
+Doan 30-50% gan nhu mien phi (0.004-0.009), roi **tang gap ~25 lan** ngay khi
+qua moc 50%. Diem gay sac net nam dung o **50%** — do la ti le cuoi cung con
+nam tren vung phang, cho muc nen cao nhat ma chua phai tra gia.
+
+> Vi vay chon 50% khong phai la uoc luong: no la diem cuoi cua vung phang, xac
+> dinh boi so lieu. Cat it hon (30%, 40%) chi lam model to ra ma khong duoc
+> them do chinh xac nao.
+
+### AP50-95 xuong truoc AP50
+
+| Ratio | AP50 | AP50-95 |
+|---|---:|---:|
+| 30% | 88.09 | 71.51 |
+| 40% | 88.05 (-0.04) | 70.97 (**-0.54**) |
+| 60% | 86.78 | 68.69 |
+| 70% | 84.98 | 66.42 |
+
+Tu 30% sang 40%, AP50 gan nhu dung yen (-0.04) nhung AP50-95 mat 0.54. Nghia la
+model **van tim ra vat the nhung dinh vi kem chinh xac hon** — pruning lam suy
+giam chat luong hoi quy box truoc khi anh huong den kha nang phat hien. Dung
+AP50 mot minh se khong thay dieu nay.
 
 ### Lop nao chiu thiet khi cat sau
 
-AP50 per-class, 60% so voi 70%:
+AP50 per-class:
 
-| Lop | 60% | 70% | Chenh |
-|---|---:|---:|---:|
-| chair | 72.5 | 69.4 | -3.1 |
-| bottle | 79.1 | 76.1 | -3.0 |
-| diningtable | 83.4 | 78.5 | -4.9 |
-| sofa | 82.1 | 81.4 | -0.7 |
-| pottedplant | 62.7 | 62.3 | -0.4 |
-| car | 93.9 | 93.1 | -0.8 |
-| person | 90.8 | 89.3 | -1.5 |
+| Lop | 30% | 40% | 60% | 70% | 30->70 |
+|---|---:|---:|---:|---:|---:|
+| pottedplant | 68.0 | 65.6 | 62.7 | 62.3 | **-5.7** |
+| aeroplane | 94.6 | 93.9 | 93.2 | 90.3 | -4.3 |
+| chair | 73.4 | 73.8 | 72.5 | 69.4 | -4.0 |
+| diningtable | 83.1 | 83.9 | 83.4 | 78.5 | -4.6 |
+| bottle | 81.1 | 79.6 | 79.1 | 76.1 | -5.0 |
+| person | 91.6 | 91.6 | 90.8 | 89.3 | -2.3 |
+| car | 94.6 | 94.5 | 93.9 | 93.1 | -1.5 |
+| boat | 78.4 | 79.6 | 78.2 | 78.4 | 0.0 |
 
-Nhom object nho / bi che khuat (chair, bottle, diningtable) mat nhieu nhat.
-pottedplant von da thap o moi ti le nen khong con gi de mat them.
+Vat nho va bi che khuat (pottedplant, bottle, chair) mat nhieu nhat; vat lon va
+ro net (car, person) gan nhu khong he han gi. pottedplant giam deu tu dau den
+cuoi va luon la lop yeu nhat o moi ti le.
 
 ### So voi cong trinh gan nhat
 
@@ -369,8 +400,8 @@ hon), co khao sat do nhay tau, va do that tren Jetson Nano.
 **Da du 10/10 dong.** Tat ca 8 doi chung deu train 100 epoch tren Kaggle 2xT4 (DDP),
 moi model mot notebook (`notebooks/share8/nb1..nb8`), khong con model nao phai chay.
 
-Quet ti le pruning: **2/5 xong** (60%, 70%). Con 30%, 40% dang train tiep
-va 50% chay lai de doi chieu.
+Quet ti le pruning: **4/5 xong** (30%, 40%, 60%, 70%). Con 50% — dang dung
+so cua run cu `cwd_t9`, nen chay lai trong cung quet de doi chieu.
 
 Con thieu (khong chan viec lap bang):
 
