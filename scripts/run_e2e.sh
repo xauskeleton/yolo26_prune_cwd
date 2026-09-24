@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Chay ca pipeline: prune -> finetune + CWD -> val.
-# Sua cac bien duoi day, hoac dat truoc lenh: TAG=r30 RATIO=0.3 ./scripts/run_e2e.sh
+# Sua cac bien duoi day, hoac dat truoc lenh:
+#   TAG=r30 RATIO=0.3 ./scripts/run_e2e.sh
+#   DATA=VisDrone.yaml TAG=vd50 ./scripts/run_e2e.sh
 set -e
 
 DATA=${DATA:-VOC.yaml}
@@ -12,8 +14,14 @@ IMGSZ=${IMGSZ:-640}
 DEVICE=${DEVICE:-0}
 STOP_AFTER_H=${STOP_AFTER_H:-10}
 
-# De trong -> tu train baseline tu trong so COCO.
-BASELINE=${BASELINE:-weights/yolo26m_baseline.pt}
+# Ten file baseline bam theo dataset, khop voi dkey() trong run_e2e.py: baseline
+# gan chat voi dataset (khac so lop) nen VisDrone khong dung chung voi VOC.
+# Khong co file -> tu them stage baseline, train tu trong so COCO.
+if [ "$DATA" = "VOC.yaml" ]; then
+  BASELINE=${BASELINE:-weights/yolo26m_baseline.pt}
+else
+  BASELINE=${BASELINE:-weights/yolo26m_baseline_${DATA%.yaml}.pt}
+fi
 
 cd "$(dirname "$0")/.."
 
