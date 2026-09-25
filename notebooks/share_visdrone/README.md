@@ -165,6 +165,38 @@ o FP32, ngoai autocast). Tren T4 15GB o batch 16 DDP thi co the sat tran VRAM.
 Neu bao CUDA out of memory: **dung tu ha batch**, bao lai de ca nhom cung ha —
 batch khac nhau thi BatchNorm chuan hoa tren so mau khac nhau, bang het so sanh.
 
+## Resume thu cong (khi phien bi danh dau **failed**)
+
+Kaggle **khong luu output** cua version bi giet vi qua gio, nen "Add Data ->
+Your Work" khong thay no. Van lay lai duoc:
+
+1. Mo version failed -> tab **Output** -> tai `last.pt` ve.
+   Trinh duyet doi duoi thanh `.zip` (file `.pt` cua PyTorch von la mot zip).
+   **Doi ten lai thanh `.pt`, KHONG giai nen.**
+2. Upload thanh Kaggle dataset, roi **Add Data** vao notebook.
+3. Neu ban upload ca thu muc va giu nguyen ten (`vd_yolo26m/weights/last.pt`)
+   thi **khong can lam gi them** — cell resume tu tim thay o bat ky do sau nao.
+   Neu chi upload moi file `last.pt` roi le thi dien duong dan vao cell 2:
+
+```python
+MANUAL_LAST = {
+    BASE_NAME: "/kaggle/input/vd-resume/last.pt",
+    OURS_NAME: "",
+}
+```
+
+Resume chi can `last.pt`, khong bat buoc co `results.csv` hay `args.yaml`:
+so epoch nam ngay trong checkpoint.
+
+Gan nhieu output cung luc thi cell resume lay ban **nhieu epoch nhat**, khong
+phai ban dau tien tim thay (thu tu glob khong xac dinh).
+
+Nam truong hop tren duoc kiem tra tu dong:
+
+```bash
+python tools/test_nb_resume.py
+```
+
 ## Chay tren may khac
 
 Khong dung Kaggle thi co `scripts/run_e2e.sh`:
