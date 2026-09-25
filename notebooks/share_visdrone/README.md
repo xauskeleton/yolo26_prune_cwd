@@ -49,6 +49,94 @@ Neu buoc phai doi (vi du het VRAM) thi **bao lai**, dung tu sua rooi im lang.
 `imgsz=640` la muc chuan cua cac bai nen model tren VisDrone (FDM-YOLO,
 YOLOv8n-ACW, cac bang YOLOv8n/s) nen so lieu doi chieu duoc voi ho.
 
+## Sieu tham so
+
+Da doc `train_args` tu chinh cac checkpoint VOC. **Cac run VOC theo size KHONG
+dong nhat**:
+
+| | yolo26s | yolo26l | yolo26m |
+|---|---:|---:|---:|
+| batch | 32 | 32 | **16** |
+| cos_lr | True | True | **False** |
+| patience | 20 | 30 | **100** |
+| warmup_epochs | 3.0 | **5.0** | 3.0 |
+| device | 0,1 (DDP) | 0,1 (DDP) | **0** |
+
+(`lr0` cung khac nhau — 0.001 / 0.0002 / 0.01 — nhung `optimizer=auto` bo qua
+`lr0` va tu chon lay, nen cho nay khong tinh la khac biet that.)
+
+Con lai trung khop het: epochs 100, imgsz 640, seed 0, box/cls/dfl 7.5/0.5/1.5,
+nbs 64, mosaic 1.0, close_mosaic 10, mixup/cutmix/copy_paste 0, hsv 0.015/0.7/0.4,
+degrees 0, translate 0.1, scale 0.5, shear 0, flipud 0, fliplr 0.5, erasing 0.4,
+rect False, multi_scale 0.
+
+> Khong tim thay config cua `yolo26n` — notebook goc khong nam trong repo va may
+> nay khong co `yolo26n_baseline.pt`. Ai giu file do thi doc `train_args` ra.
+
+### VisDrone dung mot config duy nhat cho ca 4 size
+
+Lay **config cua m**, vi do la cau hinh chinh cua bai (ca quet ti le, quet tau
+va moi so headline deu chay bang no):
+
+```python
+EPOCHS = 100        BATCH = 16          IMGSZ = 640         seed = 0
+COS_LR = False      PATIENCE = 100      WARMUP = 3.0
+optimizer = "auto"  # -> MuSGD, tu chon lr
+DEVICE = "0,1"      # DDP cho ca 4 size
+```
+
+Ba tham so `cos_lr` / `patience` / `warmup_epochs` duoc **ghi thang trong
+notebook** chu khong de mac dinh — de nhin la thay, va de Ultralytics co doi
+mac dinh thi bang van khong troi.
+
+Vi sao chon nhu vay:
+
+- **`patience=100`** tat early stop, nen ca 4 size deu la run 100 epoch that.
+  Voi patience 20-30 thi co size dung som, co size chay het — bang theo size ma
+  moi dong mot do dai thi khong so sanh duoc.
+- **`batch=16` chu khong 32.** VisDrone chi co 6471 anh: batch 16 cho 405
+  iter/epoch, batch 32 chi con 202 — qua it. Batch 16 con an toan VRAM cho
+  `nb_l` (student l + teacher l forward FP32).
+- **`DEVICE="0,1"` cho ca 4.** VOC-m chay 1 GPU nen BN chuan hoa tren 16 mau,
+  con n/s/l chay DDP nen BN tren 8 mau. Chon DDP cho het de bon dong giong nhau,
+  va vi khong dung DDP thi `nb_l` khong kip trong quota.
+
+Phan augmentation giu nguyen mac dinh, khong tinh chinh rieng cho VisDrone:
+bang nay la de tra loi "pipeline co chuyen sang dataset khac duoc khong", ma do
+lai sieu tham so cho tung dataset thi cau tra loi mat gia tri.
+
+### Hai thu da can nhac va bo
+
+**1. Tang `epochs`.** VisDrone 6471 anh so voi 16551 cua VOC:
+
+| | anh | iter/epoch (batch 16) | 100 epoch |
+|---|---:|---:|---:|
+| VOC | 16551 | 1035 | 103500 |
+| VisDrone | 6471 | 405 | 40500 |
+
+Chi bang **39%** so buoc toi uu; muon bang phai chay ~256 epoch. Van giu 100 vi
+cac bai nen model tren VisDrone deu dung 100, vi baseline va Ours nhan cung mot
+ngan sach nen do chenh van co nghia, va vi 256 epoch khong du quota.
+
+> Ghi vao phan han che: ca hai dong deu chua hoi tu han o 100 epoch. **Do chenh**
+> moi la thu can bao cao, khong phai con so tuyet doi.
+
+**2. Tang `max_det` (300).** VisDrone co anh dong hon 300 vat the nen 300 se cat
+bot va ep AP xuong. Nhung cac bai doi chung cung chay mac dinh Ultralytics, tuc
+la bi cat y het — doi len se lam so cua ta khong con doi chieu duoc voi ho.
+Giu 300, ghi vao phan han che. Dem thu sau khi tai dataset:
+
+```bash
+python -c "
+import pathlib, collections
+d = pathlib.Path('datasets/VisDrone/labels/train')
+c = collections.Counter(len([x for x in f.read_text().splitlines() if x.strip()])
+                        for f in d.glob('*.txt'))
+print('anh >300 vat the:', sum(v for k, v in c.items() if k > 300), '/', sum(c.values()))
+print('nhieu nhat:', max(c))
+"
+```
+
 ## Cach chay
 
 1. Settings -> Accelerator **GPU T4 x2**, **Internet: On**.

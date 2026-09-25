@@ -430,6 +430,22 @@ voi PASCAL VOC. Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot s
 Setup: 6471 train / 548 val, 10 lop, imgsz 640, 100 epoch, Kaggle T4 x2 (DDP),
 prune 50% L1-norm div8, CWD tau=9 kd_layers=neck kd_warmup=5.
 
+**Mot config duy nhat cho ca 4 size** (batch 16, cos_lr=False, patience=100,
+warmup 3.0, DDP) — lay tu cau hinh cua m. Chi tiet va ly do:
+`notebooks/share_visdrone/README.md`.
+
+> **Can sua o bang VOC theo size:** doc `train_args` tu checkpoint cho thay
+> cac run VOC n/s/l dung batch 32 + cos_lr=True + patience 20-30, con m dung
+> batch 16 + cos_lr=False + patience 100. Tuc la hinh ho model trong `dcmm.py`
+> dang so cac run khong cung dieu kien. Hoac chay lai n/s/l bang config cua m,
+> hoac ghi ro khac biet nay trong bai.
+
+Han che phai ghi vao bai: VisDrone chi co 6471 anh train nen 100 epoch chi
+bang 40500 buoc, so voi 103500 cua VOC (39%) — ca hai dong deu chua hoi tu
+han, nhung cung ngan sach nen do chenh van co nghia. Ngoai ra `max_det=300`
+cat bot tren anh dong hon 300 vat the; giu mac dinh de con doi chieu duoc
+voi cac bai khac cung dung Ultralytics.
+
 imgsz 640 la muc chuan cua cac bai nen model tren VisDrone (FDM-YOLO,
 YOLOv8n-ACW, cac bang YOLOv8n/s) nen so sanh duoc. Cac bai chuyen ve vat the
 nho dung 1024-1280, an hon dang ke (640 -> 1280 khoang +25% mAP) nhung do la
