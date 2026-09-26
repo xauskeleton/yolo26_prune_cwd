@@ -84,15 +84,16 @@ Ba thu ho khong co, phai neu ro trong bai:
 results/visdrone/
 ├── README.md
 ├── ckpt/
-│   ├── baseline/    yolo26{n,s,m,l}_vd_baseline.pt
-│   └── pruned/      yolo26{n,s,m,l}_vd_ours50.pt
+│   ├── baseline/{n,s,m,l}/   yolo26<size>_vd_baseline.pt
+│   └── pruned/{n,s,m,l}/     yolo26<size>_vd_ours50.pt
 └── logs/
-    ├── baseline/    yolo26{n,s,m,l}_vd_baseline.csv
-    └── pruned/      yolo26{n,s,m,l}_vd_ours50.csv
+    ├── baseline/{n,s,m,l}/   yolo26<size>_vd_baseline.csv
+    └── pruned/{n,s,m,l}/     yolo26<size>_vd_ours50.csv
 ```
 
-Tach **baseline** va **pruned** thanh hai nhanh rieng de khong lan lon; ten
-file da mang size (`n/s/m/l`) nen khong can them thu muc con theo size.
+Tach theo **loai** (baseline / pruned) roi theo **size** (n/s/m/l). Moi thu muc
+cuoi dung mot file, va moi nguoi chi cham vao thu muc size cua minh nen khong
+de len nhau khi gop ket qua.
 
 Cell ket qua cua notebook **tu gom** dung bon file nay vao
 `/kaggle/working/yolo/results/visdrone/...`, cung layout voi day, nen tai ve la

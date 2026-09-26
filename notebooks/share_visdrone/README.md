@@ -182,14 +182,15 @@ Chay xong ca hai, cell ket qua **tu gom** lai mot cho cho de tai:
 
 ```
 /kaggle/working/yolo/results/visdrone/
-├── ckpt/baseline/yolo26<size>_vd_baseline.pt
-├── ckpt/pruned/yolo26<size>_vd_ours50.pt
-├── logs/baseline/yolo26<size>_vd_baseline.csv
-└── logs/pruned/yolo26<size>_vd_ours50.csv
+├── ckpt/baseline/<size>/yolo26<size>_vd_baseline.pt
+├── ckpt/pruned/<size>/yolo26<size>_vd_ours50.pt
+├── logs/baseline/<size>/yolo26<size>_vd_baseline.csv
+└── logs/pruned/<size>/yolo26<size>_vd_ours50.csv
 ```
 
-Baseline va pruned tach hai nhanh rieng cho khoi lan. Dung layout nhu trong
-repo, nen tai ve xong la chep thang vao `results/visdrone/` duoc.
+Dung layout nhu trong repo, nen tai ve xong la chep thang vao
+`results/visdrone/` duoc — moi nguoi chi cham vao thu muc size cua minh nen
+khong de len nhau.
 
 ## Resume thu cong (khi phien bi danh dau **failed**)
 
