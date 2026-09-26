@@ -46,6 +46,12 @@ for size in SIZES:
 
     if ours:
         members.append((ours, "vd_ours{}/weights/last.pt".format(size)))
+        # Phai kem CA best.pt: khi resume, Ultralytics chi ghi best.pt luc fitness
+        # vuot ky luc cu. Neu cac epoch con lai khong vuot thi het lan chay van
+        # khong co best.pt, va buoc do AP khong tim thay file nao de do.
+        ours_best = ours.parent / ours.name.replace("_last", "_best")
+        src_best = ours_best if ours_best.exists() else ours
+        members.append((src_best, "vd_ours{}/weights/best.pt".format(size)))
 
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_STORED) as z:
         for src, arc in members:

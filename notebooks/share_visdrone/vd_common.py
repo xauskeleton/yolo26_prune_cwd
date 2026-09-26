@@ -171,14 +171,23 @@ def prune50(size, src_weights, out_path, ratio=0.5, divisor=8):
 
 
 def measure(name):
-    best = _run(name) / "weights" / "best.pt"
-    if done_epochs(name) < CFG["EPOCHS"] or not best.exists():
+    """Do AP cua mot run da xong. Tra ve (params_M, AP50, AP50-95, ten file)."""
+    if done_epochs(name) < CFG["EPOCHS"]:
         return None
-    m = YOLO(str(best))
+    # best.pt co the KHONG ton tai: khi resume, Ultralytics chi ghi best.pt luc
+    # fitness vuot ky luc cu, ma ky luc do nam trong checkpoint tu phien truoc.
+    # Neu cac epoch cuoi khong vuot thi khong co best.pt -> lui ve last.pt.
+    w = _run(name) / "weights" / "best.pt"
+    if not w.exists():
+        w = _run(name) / "weights" / "last.pt"
+        if not w.exists():
+            return None
+        print("  ({}: khong co best.pt, do tren last.pt)".format(name))
+    m = YOLO(str(w))
     r = m.val(data=CFG["DATA"], imgsz=CFG["IMGSZ"], batch=CFG["BATCH"],
               device=str(CFG["DEVICE"]).split(",")[0])
     return (sum(p.numel() for p in m.model.parameters()) / 1e6,
-            r.box.map50 * 100, r.box.map * 100)
+            r.box.map50 * 100, r.box.map * 100, w)
 
 
 def report(size, base_name, ours_name):
@@ -195,7 +204,7 @@ def report(size, base_name, ours_name):
 
     print("| Model | Params (M) | AP50 | AP50-95 |")
     print("|---|---:|---:|---:|")
-    for label, (par, ap50, ap) in rows:
+    for label, (par, ap50, ap, _w) in rows:
         print("| {} | {:.2f} | {:.2f} | {:.2f} |".format(label, par, ap50, ap))
 
     vd = CFG["REPO_DIR"] / "results" / "visdrone"
@@ -205,7 +214,8 @@ def report(size, base_name, ours_name):
         ck, lg = vd / "ckpt" / kind / size, vd / "logs" / kind / size
         ck.mkdir(parents=True, exist_ok=True)
         lg.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_run(name) / "weights" / "best.pt", ck / (stem + ".pt"))
+        src = dict(rows)[("YOLO26-" if kind == "baseline" else "Ours-") + size.upper()][3]
+        shutil.copy2(src, ck / (stem + ".pt"))
         shutil.copy2(run_csv(name), lg / (stem + ".csv"))
         saved += [ck / (stem + ".pt"), lg / (stem + ".csv")]
 

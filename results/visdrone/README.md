@@ -13,8 +13,8 @@ Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size.
 | **Ours-N** | **1.07** | **2.5** | **28.96** | **16.30** |
 | YOLO26-S | 9.47 | | 41.36 | 24.81 |
 | **Ours-S** | **4.01** | **8.1** | **35.84** | **20.81** |
-| YOLO26-M | | | 46.90 | 28.60 |
-| **Ours-M** | **7.44** | **23.4** | dang chay 81/100 | |
+| YOLO26-M | 20.36 | 67.9 | 46.90 | 28.70 |
+| **Ours-M** | **7.44** | **23.4** | **42.70** | **25.30** |
 | YOLO26-L | | | 48.30 | 29.50 |
 | **Ours-L** | **9.65** | **31.7** | dang chay 43/100 | |
 
@@ -29,7 +29,7 @@ Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD.
 |---|---|---|---|
 | n | **xong** | **xong** | 4.14h + 4.51h |
 | s | **xong** | **xong** | 4.42h + 5.03h |
-| m | **xong** | 81/100 epoch | 6.15h + ... |
+| m | **xong** | **xong** | 6.15h + 6.0h |
 | l | **xong** | 43/100 epoch | 8.00h + ... |
 
 Nhanh hon uoc tinh ban dau kha nhieu (da du doan n ~2-3h, thuc te 8.7h ca hai;
@@ -44,6 +44,7 @@ m du doan 15h, baseline moi het 6.15h).
 | VOC (m, prune 50%) | 89.04 | 87.96 | **-1.08** |
 | VisDrone (n) | 34.80 | 28.96 | **-5.84** |
 | VisDrone (s) | 41.36 | 35.84 | **-5.52** |
+| VisDrone (m) | 46.90 | 42.70 | **-4.20** |
 
 Ket luan "cat 50% gan nhu mien phi" rut ra tu VOC **khong chuyen sang VisDrone**.
 Hop ly: VisDrone toan vat the nho va dong, ma chinh bang per-class tren VOC da
@@ -53,6 +54,9 @@ sau. VisDrone la ca dataset toan nhom do.
 > Phai ghi thang dieu nay trong bai, dung im lang. No khong pha ket qua — 1.07M
 > tham so ma giu duoc 83% AP50 cua ban goc van la mot ti le doi tot — nhung
 > dien giai phai khac voi VOC.
+
+Muc giam **giam dan theo kich thuoc model**: n -5.84, s -5.52, m -4.20. Model
+cang lon cang chiu prune tot, hop ly vi kenh du thua nhieu hon.
 
 ### 2. Ti le nen kenh chi ~1.5x du dat prune ratio 0.5
 
@@ -75,10 +79,17 @@ duoc**, khong phai tren toan model.
 Ho bao **-73.5% params, mAP50 giam 2.7** tren YOLOv8m/VisDrone.
 Baseline YOLO26-M cua ta o day la 46.90 — cung hang voi ho (~50.6).
 
-Nhung n va s deu mat ~5.5-5.8 diem. Neu m theo dung xu huong do thi Ours-M se
-ra khoang 41-42, tuc la **giam hon gap doi ho**. Cho ket qua m chay xong roi
-tinh, nhung nen chuan bi truoc: hoac giai thich khac biet (ho co sparsity
-training truoc khi prune), hoac ha ti le prune cho VisDrone xuong 30-40%.
+m da xong: **46.90 -> 42.70, giam 4.20**. Do hon n (-5.84) va s (-5.52) dung
+nhu du doan model lon chiu prune tot hon, nhung van **gap 1.6 lan** muc giam 2.7
+cua ho o cung ti le nen (-65.8% params so voi -73.5%).
+
+Ba huong giai thich, can chon truoc khi viet:
+- Ho co **sparsity training** truoc khi prune (day gamma ve 0), ta cat thang.
+- Ho train bao nhieu epoch chua ro; ta chi 100 epoch = 39% so buoc cua VOC.
+- Ho co the do tren split khac (test-dev thay vi val).
+
+Neu khong khep duoc thi ha ti le prune cho VisDrone xuong 30-40% va bao cao o
+muc nen thap hon — van trung thuc va van manh.
 
 ## Giao thuc
 
