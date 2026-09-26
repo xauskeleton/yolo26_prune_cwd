@@ -9,25 +9,76 @@ Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size.
 
 | Model | Params (M) | GFLOPs | AP50 | AP50-95 |
 |---|---:|---:|---:|---:|
-| YOLO26-N | | | | |
-| **Ours-N** | | | | |
-| YOLO26-S | | | | |
-| **Ours-S** | | | | |
-| YOLO26-M | | | | |
-| **Ours-M** | | | | |
-| YOLO26-L | | | | |
-| **Ours-L** | | | | |
+| YOLO26-N | 2.38 | | 34.80 | 19.70 |
+| **Ours-N** | **1.07** | **2.5** | **28.96** | **16.30** |
+| YOLO26-S | 9.47 | | 41.36 | 24.81 |
+| **Ours-S** | **4.01** | **8.1** | **35.84** | **20.81** |
+| YOLO26-M | | | 46.90 | 28.60 |
+| **Ours-M** | **7.44** | **23.4** | dang chay 81/100 | |
+| YOLO26-L | | | 48.30 | 29.50 |
+| **Ours-L** | **9.65** | **31.7** | dang chay 43/100 | |
+
+Params cua Ours la so **sau khi prune, truoc finetune** (kien truc khong doi khi
+finetune). GFLOPs cua baseline chua trich ra tu log.
 
 Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD.
 
 ## Trang thai
 
-| Size | Baseline | Ours | Nguoi chay |
+| Size | Baseline | Ours | Thoi gian |
 |---|---|---|---|
-| n | chua | chua | |
-| s | chua | chua | |
-| m | chua | chua | |
-| l | chua | chua | |
+| n | **xong** | **xong** | 4.14h + 4.51h |
+| s | **xong** | **xong** | 4.42h + 5.03h |
+| m | **xong** | 81/100 epoch | 6.15h + ... |
+| l | **xong** | 43/100 epoch | 8.00h + ... |
+
+Nhanh hon uoc tinh ban dau kha nhieu (da du doan n ~2-3h, thuc te 8.7h ca hai;
+m du doan 15h, baseline moi het 6.15h).
+
+## Hai dieu rut ra tu n va s (da xong)
+
+### 1. Gia phai tra tren VisDrone cao gap 5 lan so voi VOC
+
+| | AP50 baseline | AP50 Ours | Chenh |
+|---|---:|---:|---:|
+| VOC (m, prune 50%) | 89.04 | 87.96 | **-1.08** |
+| VisDrone (n) | 34.80 | 28.96 | **-5.84** |
+| VisDrone (s) | 41.36 | 35.84 | **-5.52** |
+
+Ket luan "cat 50% gan nhu mien phi" rut ra tu VOC **khong chuyen sang VisDrone**.
+Hop ly: VisDrone toan vat the nho va dong, ma chinh bang per-class tren VOC da
+cho thay nhom vat nho (pottedplant, bottle, chair) chiu thiet nang nhat khi cat
+sau. VisDrone la ca dataset toan nhom do.
+
+> Phai ghi thang dieu nay trong bai, dung im lang. No khong pha ket qua — 1.07M
+> tham so ma giu duoc 83% AP50 cua ban goc van la mot ti le doi tot — nhung
+> dien giai phai khac voi VOC.
+
+### 2. Ti le nen kenh chi ~1.5x du dat prune ratio 0.5
+
+| size | tong kenh | sau prune | ti le |
+|---|---:|---:|---:|
+| n | 9,496 | 6,440 | 1.47x |
+| s | 18,992 | 12,608 | 1.51x |
+| m | 28,096 | 17,488 | 1.61x |
+| l | 35,264 | 22,976 | 1.53x |
+
+Vi **34/124 lop BN bi SKIP (residual)** — chung giu nguyen toan bo kenh. Chi
+90 lop con lai bi cat 50%. Ti le tham so thi cao hon (2.2x den 2.9x) vi cac lop
+bi cat nam o cho nhieu tham so.
+
+Khi viet bai nho phan biet: "prune ratio 50%" la ti le tren **cac lop prune
+duoc**, khong phai tren toan model.
+
+## Rui ro can biet: doi chung arXiv 2509.12918
+
+Ho bao **-73.5% params, mAP50 giam 2.7** tren YOLOv8m/VisDrone.
+Baseline YOLO26-M cua ta o day la 46.90 — cung hang voi ho (~50.6).
+
+Nhung n va s deu mat ~5.5-5.8 diem. Neu m theo dung xu huong do thi Ours-M se
+ra khoang 41-42, tuc la **giam hon gap doi ho**. Cho ket qua m chay xong roi
+tinh, nhung nen chuan bi truoc: hoac giai thich khac biet (ho co sparsity
+training truoc khi prune), hoac ha ti le prune cho VisDrone xuong 30-40%.
 
 ## Giao thuc
 
