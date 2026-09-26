@@ -7,21 +7,45 @@ Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size.
 
 ## Bang chinh
 
+Do tren VisDrone2019-DET val (548 anh, 38759 vat the), imgsz 640.
+
 | Model | Params (M) | GFLOPs | AP50 | AP50-95 |
 |---|---:|---:|---:|---:|
-| YOLO26-N | 2.38 | | 34.80 | 19.70 |
+| YOLO26-N | 2.38 | 5.2 | 34.80 | 19.70 |
 | **Ours-N** | **1.07** | **2.5** | **28.96** | **16.30** |
-| YOLO26-S | 9.47 | | 41.36 | 24.81 |
+| YOLO26-S | 9.47 | 20.5 | 41.36 | 24.81 |
 | **Ours-S** | **4.01** | **8.1** | **35.84** | **20.81** |
 | YOLO26-M | 20.36 | 67.9 | 46.90 | 28.70 |
-| **Ours-M** | **7.44** | **23.4** | **42.70** | **25.30** |
-| YOLO26-L | | | 48.30 | 29.50 |
-| **Ours-L** | **9.65** | **31.7** | dang chay 43/100 | |
+| **Ours-M** | **7.43** | **23.1** | **42.70** | **25.30** |
+| YOLO26-L | 24.75 | 86.1 | 48.27 | 29.49 |
+| **Ours-L** | **9.63** | **31.2** | **44.70** | **26.92** |
 
-Params cua Ours la so **sau khi prune, truoc finetune** (kien truc khong doi khi
-finetune). GFLOPs cua baseline chua trich ra tu log.
+Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD tau=9.
+Params/GFLOPs do tren model da fuse.
 
-Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD.
+| Size | Giam params | Giam GFLOPs | Mat AP50 |
+|---|---:|---:|---:|
+| n | -55.0% | -51.9% | **-5.84** |
+| s | -57.7% | -60.5% | **-5.52** |
+| m | -63.5% | -66.0% | **-4.20** |
+| l | -61.1% | -63.8% | **-3.57** |
+
+## Ket qua manh nhat: prune thang model to hon la chon model nho
+
+Cau hoi hien nhien cua reviewer: *"Prune yolo26m lam gi, dung thang yolo26s
+cho roi?"* So lieu tra loi duoc:
+
+| | Params (M) | GFLOPs | AP50 |
+|---|---:|---:|---:|
+| YOLO26-S (nguyen ban) | 9.47 | 20.5 | 41.36 |
+| **Ours-M** (prune tu yolo26m) | **7.43** | 23.1 | **42.70** |
+
+**It hon 21.5% tham so, AP50 cao hon 1.34 diem.** GFLOPs nhinh hon 12.7%.
+Ours-L cung vay: 9.63M dat 44.70, hon YOLO26-S **3.34 diem** o cung muc tham so.
+
+Nghia la mo hinh nen tu ban lon **khong phai mot cach xap xi re tien cua ban
+nho** — no o mot diem tot hon han tren duong danh doi. Day la lap luan trung
+tam nen dung cho bang VisDrone.
 
 ## Trang thai
 
@@ -30,7 +54,9 @@ Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD.
 | n | **xong** | **xong** | 4.14h + 4.51h |
 | s | **xong** | **xong** | 4.42h + 5.03h |
 | m | **xong** | **xong** | 6.15h + 6.0h |
-| l | **xong** | 43/100 epoch | 8.00h + ... |
+| l | **xong** | **xong** | 8.00h + 8.8h |
+
+**Xong ca 4 size.**
 
 Nhanh hon uoc tinh ban dau kha nhieu (da du doan n ~2-3h, thuc te 8.7h ca hai;
 m du doan 15h, baseline moi het 6.15h).
@@ -45,6 +71,7 @@ m du doan 15h, baseline moi het 6.15h).
 | VisDrone (n) | 34.80 | 28.96 | **-5.84** |
 | VisDrone (s) | 41.36 | 35.84 | **-5.52** |
 | VisDrone (m) | 46.90 | 42.70 | **-4.20** |
+| VisDrone (l) | 48.27 | 44.70 | **-3.57** |
 
 Ket luan "cat 50% gan nhu mien phi" rut ra tu VOC **khong chuyen sang VisDrone**.
 Hop ly: VisDrone toan vat the nho va dong, ma chinh bang per-class tren VOC da
@@ -55,8 +82,9 @@ sau. VisDrone la ca dataset toan nhom do.
 > tham so ma giu duoc 83% AP50 cua ban goc van la mot ti le doi tot — nhung
 > dien giai phai khac voi VOC.
 
-Muc giam **giam dan theo kich thuoc model**: n -5.84, s -5.52, m -4.20. Model
-cang lon cang chiu prune tot, hop ly vi kenh du thua nhieu hon.
+Muc giam **giam deu theo kich thuoc model**: n -5.84, s -5.52, m -4.20,
+l -3.57. Bon diem, don dieu, khong co ngoai le — model cang lon cang chiu prune
+tot, hop ly vi kenh du thua cang nhieu.
 
 ### 2. Ti le nen kenh chi ~1.5x du dat prune ratio 0.5
 
@@ -79,9 +107,9 @@ duoc**, khong phai tren toan model.
 Ho bao **-73.5% params, mAP50 giam 2.7** tren YOLOv8m/VisDrone.
 Baseline YOLO26-M cua ta o day la 46.90 — cung hang voi ho (~50.6).
 
-m da xong: **46.90 -> 42.70, giam 4.20**. Do hon n (-5.84) va s (-5.52) dung
-nhu du doan model lon chiu prune tot hon, nhung van **gap 1.6 lan** muc giam 2.7
-cua ho o cung ti le nen (-65.8% params so voi -73.5%).
+Diem gan nhat de so la **l**: giam **3.57** o muc nen -61.1% params, so voi ho
+giam 2.7 o muc -73.5%. Ta nen it hon ma mat nhieu hon, tuc la **van thua ho**
+neu so thang.
 
 Ba huong giai thich, can chon truoc khi viet:
 - Ho co **sparsity training** truoc khi prune (day gamma ve 0), ta cat thang.
