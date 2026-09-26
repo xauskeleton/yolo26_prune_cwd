@@ -203,3 +203,9 @@ calibration_*.npy
 # Training logs
 args.yaml
 results.csv
+
+# Checkpoint tai tu Kaggle ve co duoi .zip (file .pt cua PyTorch von la zip,
+# trinh duyet doi ten). *.pt o tren khong bat duoc chung -> tung lot 148 MB
+# len repo. Chan ca thu muc ckpt cho chac.
+results/*/ckpt/
+*.zip
