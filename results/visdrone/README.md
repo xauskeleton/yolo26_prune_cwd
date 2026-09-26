@@ -82,7 +82,20 @@ Ba thu ho khong co, phai neu ro trong bai:
 
 ```
 results/visdrone/
-├── README.md        <- file nay
-├── ckpt/n s m l/    <- nhet best.pt cua tung size vao (khong commit, *.pt bi gitignore)
-└── logs/            <- results.csv / log Kaggle gui ve
+├── README.md                          <- file nay
+├── ckpt/
+│   └── <size>/                        n, s, m, l
+│       ├── yolo26<size>_vd_baseline.pt
+│       ├── yolo26<size>_vd_ours50.pt
+│       ├── results_baseline.csv
+│       └── results_ours.csv
+└── logs/                              <- log Kaggle, ghi chu linh tinh
 ```
+
+Cell ket qua cua notebook **tu gom** dung 4 file tren vao
+`/kaggle/working/yolo/results/visdrone/ckpt/<size>/`, cung layout voi day, nen
+tai ve la chep thang vao duoc.
+
+File `.pt` bi `.gitignore:159` chan nen khong len repo — chi nam o may. Muon
+day len thi dung Kaggle dataset hoac Drive, dung `git add -f` (checkpoint
+nang 5-50 MB moi cai).

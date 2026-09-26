@@ -165,6 +165,32 @@ o FP32, ngoai autocast). Tren T4 15GB o batch 16 DDP thi co the sat tran VRAM.
 Neu bao CUDA out of memory: **dung tu ha batch**, bao lai de ca nhom cung ha —
 batch khac nhau thi BatchNorm chuan hoa tren so mau khac nhau, bang het so sanh.
 
+## Weight luu o dau
+
+Trong luc chay, tren Kaggle (`project=runs/`, tat ca nam duoi `/kaggle/working`
+nen deu vao tab Output):
+
+| | |
+|---|---|
+| Baseline | `/kaggle/working/yolo/runs/vd_yolo26<size>/weights/{best,last}.pt` |
+| Ours | `/kaggle/working/yolo/runs/vd_ours<size>/weights/{best,last}.pt` |
+| Model da prune | `/kaggle/working/yolo/weights/yolo26<size>_vd_pruned50.pt` |
+
+`last.pt` ghi lai moi epoch (de resume), `best.pt` la ban tot nhat.
+
+Chay xong ca hai, cell ket qua **tu gom** lai mot cho cho de tai:
+
+```
+/kaggle/working/yolo/results/visdrone/ckpt/<size>/
+├── yolo26<size>_vd_baseline.pt
+├── yolo26<size>_vd_ours50.pt
+├── results_baseline.csv
+└── results_ours.csv
+```
+
+Dung layout nhu trong repo, nen tai ve xong la nhet thang vao
+`results/visdrone/ckpt/<size>/` duoc.
+
 ## Resume thu cong (khi phien bi danh dau **failed**)
 
 Kaggle **khong luu output** cua version bi giet vi qua gio, nen "Add Data ->
