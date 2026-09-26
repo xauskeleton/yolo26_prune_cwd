@@ -78,6 +78,54 @@ Ba thu ho khong co, phai neu ro trong bai:
 - Khao sat do nhay **tau = 1..10**.
 - Do that tren **Jetson Nano**.
 
+## Vi sao model pruned cua m va l trong "giong het nhau"
+
+Bang `scales` trong `cfg/yolo26m.yaml`:
+
+| size | depth | width | max_channels |
+|---|---:|---:|---:|
+| n | 0.5 | 0.25 | 1024 |
+| s | 0.5 | 0.50 | 1024 |
+| **m** | **0.5** | **1.0** | **512** |
+| **l** | **1.0** | **1.0** | **512** |
+
+**m va l co width y het nhau (1.0), chi khac depth.** Ma pruning kenh la thao
+tac tren *width*, khong dung den depth. Nen sau khi cat 50%, **124/124 lop dung
+chung deu ra dung cung so kenh** — khong lech mot lop nao:
+
+| lop | s | m | l |
+|---|---|---|---|
+| model.0.bn | 32 -> 16 | 64 -> 32 | 64 -> 32 |
+| model.4.cv2.bn | 256 -> 128 | 512 -> 256 | 512 -> 256 |
+| model.8.cv2.bn | 512 -> 256 | 512 -> 256 | 512 -> 256 |
+| model.22.cv2.bn | 512 -> 256 | 512 -> 256 | 512 -> 256 |
+
+Khac biet giua Ours-M va Ours-L **hoan toan la do depth**: l co 178 lop BN can
+prune so voi 124 cua m, tuc la moi khoi C3k2 lap 2 lan thay vi 1 (`n=2` so voi
+`n=1` trong log build). Sau prune: 390 lop so voi 278.
+
+Do that (VOC, prune 50% div8):
+
+| size | params goc | pruned | GFLOPs goc | pruned | nen |
+|---|---:|---:|---:|---:|---:|
+| s | 9.96M | 4.04M | 22.6 | 8.4 | 2.46x |
+| m | 21.80M | 7.50M | 74.9 | 23.6 | 2.91x |
+| l | 26.21M | 9.70M | 93.3 | 31.9 | 2.70x |
+
+`l` chi to hon `m` 20% ngay tu dau (26.2 so voi 21.8M) cung vi ly do nay — no
+sau hon chu khong rong hon.
+
+### He qua khi viet bai
+
+- Doan **m -> l** trong bang theo size la so sanh **chi khac do sau**, khong
+  phai "model to hon". Dung noi chung chung la "cac kich thuoc khac nhau".
+- Doan **n -> s** thi nguoc lai: cung depth 0.5, chi khac width (0.25 -> 0.50).
+- Doan **s -> m** khac ca width (0.5 -> 1.0) lan max_channels (1024 -> 512).
+
+Tuc la moi buoc trong ho model thay doi mot thu khac nhau. Neu bang duoc dung de
+noi "phuong phap chay duoc o moi quy mo" thi khong sao; nhung dung dien giai no
+nhu mot duong scaling deu.
+
 ## Thu muc
 
 ```

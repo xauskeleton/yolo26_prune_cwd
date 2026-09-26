@@ -418,6 +418,20 @@ Bang thu hai, cung dinh dang main result nhung tren dataset khac, de chung minh
 pipeline khong chi hop voi PASCAL VOC. Bon size n/s/m/l, moi size mot notebook
 trong `notebooks/share_visdrone/`. Checkpoint gui ve de o `results/visdrone/ckpt/`.
 
+## Vi sao model pruned cua m va l trong giong het nhau
+
+Chi tiet: `results/visdrone/README.md`.
+
+`m` va `l` trong `cfg/yolo26m.yaml` co **cung width 1.0 va cung
+max_channels 512**, chi khac depth (0.5 so voi 1.0). Pruning kenh la thao
+tac tren width nen 124/124 lop dung chung ra dung cung so kenh. Khac biet
+giua Ours-M va Ours-L hoan toan la do do sau (178 lop BN so voi 124).
+
+> Khi viet bai: doan m -> l trong ho model la so sanh **chi khac do sau**,
+> doan n -> s chi khac width, doan s -> m khac ca width lan max_channels.
+> Moi buoc doi mot thu khac nhau - dung dien giai nhu mot duong scaling deu.
+
+
 ## Trang thai
 
 **Da du 10/10 dong.** Tat ca 8 doi chung deu train 100 epoch tren Kaggle 2xT4 (DDP),
