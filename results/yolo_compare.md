@@ -305,7 +305,7 @@ Dong 50% lay tu run `cwd_t9` (cung cau hinh, cung baseline, cung 100 epoch)
 
 ### Bang GFLOPs - AP@0.5 (quet ti le pruning)
 
-![AP@0.5 theo GFLOPs](flops_ap50.png)
+![AP@0.5 theo GFLOPs](flops_ap50_sweep_ratio.png)
 
 *Sinh boi `tools/plot_flops_ap50.py`. Huong tot la tren-trai. Duong xanh la
 quet ti le cua ta, cham xam la 8 doi chung (cung 100 epoch, cung giao thuc).
@@ -412,50 +412,11 @@ params voi -2.26 AP50**.
 
 ## VisDrone2019-DET (bang phu, dang chay)
 
-Bang thu hai, cung dinh dang main result, de chung minh pipeline khong chi hop
-voi PASCAL VOC. Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size
-(n / s / m / l), moi cai lam tron baseline + Ours cua size do.
+Chuyen sang file rieng: **`results/visdrone/README.md`**.
 
-| Model | Params (M) | AP50 | AP50-95 |
-|---|---:|---:|---:|
-| YOLO26-N | | | |
-| Ours-N | | | |
-| YOLO26-S | | | |
-| Ours-S | | | |
-| YOLO26-M | | | |
-| Ours-M | | | |
-| YOLO26-L | | | |
-| Ours-L | | | |
-
-Setup: 6471 train / 548 val, 10 lop, imgsz 640, 100 epoch, Kaggle T4 x2 (DDP),
-prune 50% L1-norm div8, CWD tau=9 kd_layers=neck kd_warmup=5.
-
-**Mot config duy nhat cho ca 4 size** (batch 16, cos_lr=False, patience=100,
-warmup 3.0, DDP) — lay tu cau hinh cua m. Chi tiet va ly do:
-`notebooks/share_visdrone/README.md`.
-
-> **Can sua o bang VOC theo size:** doc `train_args` tu checkpoint cho thay
-> cac run VOC n/s/l dung batch 32 + cos_lr=True + patience 20-30, con m dung
-> batch 16 + cos_lr=False + patience 100. Tuc la hinh ho model trong `dcmm.py`
-> dang so cac run khong cung dieu kien. Hoac chay lai n/s/l bang config cua m,
-> hoac ghi ro khac biet nay trong bai.
-
-Han che phai ghi vao bai: VisDrone chi co 6471 anh train nen 100 epoch chi
-bang 40500 buoc, so voi 103500 cua VOC (39%) — ca hai dong deu chua hoi tu
-han, nhung cung ngan sach nen do chenh van co nghia. Ngoai ra `max_det=300`
-cat bot tren anh dong hon 300 vat the; giu mac dinh de con doi chieu duoc
-voi cac bai khac cung dung Ultralytics.
-
-imgsz 640 la muc chuan cua cac bai nen model tren VisDrone (FDM-YOLO,
-YOLOv8n-ACW, cac bang YOLOv8n/s) nen so sanh duoc. Cac bai chuyen ve vat the
-nho dung 1024-1280, an hon dang ke (640 -> 1280 khoang +25% mAP) nhung do la
-nhanh khac.
-
-Doi chung gan nhat (phai trich dan va phan biet):
-arXiv 2509.12918 — structured pruning theo he so BN + CWD tren YOLOv8m/VisDrone,
-25.85M -> 6.85M (-73.5%), mAP50 47.9 (-2.7), 26 -> 45 FPS (TensorRT 68).
-Khac biet cua ta: L1-norm thay vi BN gamma (co thuc nghiem cho thay gamma kem
-hon), co khao sat do nhay tau, va do that tren Jetson Nano.
+Bang thu hai, cung dinh dang main result nhung tren dataset khac, de chung minh
+pipeline khong chi hop voi PASCAL VOC. Bon size n/s/m/l, moi size mot notebook
+trong `notebooks/share_visdrone/`. Checkpoint gui ve de o `results/visdrone/ckpt/`.
 
 ## Trang thai
 
