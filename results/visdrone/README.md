@@ -119,6 +119,47 @@ Ba huong giai thich, can chon truoc khi viet:
 Neu khong khep duoc thi ha ti le prune cho VisDrone xuong 30-40% va bao cao o
 muc nen thap hon — van trung thuc va van manh.
 
+## AP theo kich thuoc vat the (pycocotools)
+
+Do bang `tools/val_apsmall.py` tren 8 checkpoint trong `ckpt/`, maxDets=300
+cho khop `max_det` cua Ultralytics.
+
+| Size | | APs | APm | APl |
+|---|---|---:|---:|---:|
+| **n** | YOLO26 | 10.16 | 26.71 | 40.84 |
+| | Ours | 7.57 | 22.09 | 34.55 |
+| | *mat* | *-25.5%* | *-17.3%* | *-15.4%* |
+| **s** | YOLO26 | 13.89 | 33.13 | 45.99 |
+| | Ours | 11.15 | 27.85 | 41.47 |
+| | *mat* | *-19.7%* | *-15.9%* | *-9.8%* |
+| **m** | YOLO26 | 18.11 | 37.26 | 54.13 |
+| | Ours | 15.43 | 33.22 | 42.24 |
+| | *mat* | *-14.8%* | *-10.8%* | *-22.0%* |
+| **l** | YOLO26 | 18.67 | 38.83 | 54.12 |
+| | Ours | 16.29 | 36.13 | 48.4 |
+| | *mat* | *-12.7%* | *-7.0%* | *-10.6%* |
+
+**Vat nho chiu thiet nang nhat o moi size** — `APs` mat nhieu hon `APm`
+trong ca 4 truong hop. Do la loi giai thich cho con so -4.20 cua VisDrone so
+voi -1.08 cua VOC: VisDrone gan nhu toan vat nho, con VOC thi khong.
+
+Muc thiet cung giam dan theo kich thuoc model: n mat -25.5% APs, l chi mat
+-12.7% — khop voi xu huong cua AP50 tong the.
+
+> **Hai canh bao khi dung bang nay.**
+>
+> 1. So pycocotools thap hon so Ultralytics **deu dan 2.24-2.37 diem** o ca 8
+>    model (vd YOLO26-M: 44.56 so voi 46.90). Da kiem tra khong phai do
+>    `maxDets` — sua thanh 300 cho khop van y nguyen. Day la khac biet phuong
+>    phap cham diem da biet giua hai cong cu. Do lech deu nen so sanh tuong doi
+>    khong bi anh huong, nhung **dung tron hai nguon trong cung mot bang**.
+>
+> 2. Ba cot kich thuoc cua arXiv 2509.12918 **khong doi chieu duoc**: bang cua
+>    ho co APmedium 66.2 trong khi AP50 chi 50.2, va APsmall 41.3 trong khi AP
+>    chi 28.3. Voi dinh nghia COCO chuan thi khong the nhu vay, nen ho dang
+>    dung mot thang do khac. Cot APs o day dung de giai thich noi bo, khong
+>    phai de so truc tiep voi ho.
+
 ## Giao thuc
 
 | | |

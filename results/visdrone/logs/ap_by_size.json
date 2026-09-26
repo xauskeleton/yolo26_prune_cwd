@@ -1,0 +1,74 @@
+[
+  {
+    "model": "yolo26l_vd_baseline",
+    "params_M": 24.75,
+    "AP50": 46.03,
+    "AP75": 27.52,
+    "APs": 18.67,
+    "APm": 38.83,
+    "APl": 54.12
+  },
+  {
+    "model": "yolo26m_vd_baseline",
+    "params_M": 20.36,
+    "AP50": 44.56,
+    "AP75": 26.66,
+    "APs": 18.11,
+    "APm": 37.26,
+    "APl": 54.13
+  },
+  {
+    "model": "yolo26n_vd_baseline",
+    "params_M": 2.38,
+    "AP50": 32.54,
+    "AP75": 17.26,
+    "APs": 10.16,
+    "APm": 26.71,
+    "APl": 40.84
+  },
+  {
+    "model": "yolo26s_vd_baseline",
+    "params_M": 9.47,
+    "AP50": 39.0,
+    "AP75": 22.74,
+    "APs": 13.89,
+    "APm": 33.13,
+    "APl": 45.99
+  },
+  {
+    "model": "yolo26l_vd_ours50",
+    "params_M": 9.63,
+    "AP50": 42.46,
+    "AP75": 25.09,
+    "APs": 16.29,
+    "APm": 36.13,
+    "APl": 48.4
+  },
+  {
+    "model": "yolo26m_vd_ours50",
+    "params_M": 7.43,
+    "AP50": 40.44,
+    "AP75": 23.24,
+    "APs": 15.43,
+    "APm": 33.22,
+    "APl": 42.24
+  },
+  {
+    "model": "yolo26n_vd_ours50",
+    "params_M": 1.07,
+    "AP50": 26.7,
+    "AP75": 14.06,
+    "APs": 7.57,
+    "APm": 22.09,
+    "APl": 34.55
+  },
+  {
+    "model": "yolo26s_vd_ours50",
+    "params_M": 4.01,
+    "AP50": 33.47,
+    "AP75": 18.43,
+    "APs": 11.15,
+    "APm": 27.85,
+    "APl": 41.47
+  }
+]
