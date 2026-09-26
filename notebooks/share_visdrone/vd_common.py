@@ -216,8 +216,12 @@ def report(size, base_name, ours_name):
         lg.mkdir(parents=True, exist_ok=True)
         src = dict(rows)[("YOLO26-" if kind == "baseline" else "Ours-") + size.upper()][3]
         shutil.copy2(src, ck / (stem + ".pt"))
-        shutil.copy2(run_csv(name), lg / (stem + ".csv"))
-        saved += [ck / (stem + ".pt"), lg / (stem + ".csv")]
+        saved.append(ck / (stem + ".pt"))
+        # results.csv co the khong co: run duoc khoi phuc tu goi resume chi kem
+        # weights/, khong kem csv. Khong duoc de cho nay lam hong ca buoc bao cao.
+        if run_csv(name).exists():
+            shutil.copy2(run_csv(name), lg / (stem + ".csv"))
+            saved.append(lg / (stem + ".csv"))
 
     print()
     print("XONG ca hai. Gui lai bang tren, kem cac file nay:")
