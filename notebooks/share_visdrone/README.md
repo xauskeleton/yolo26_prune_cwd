@@ -192,6 +192,29 @@ Dung layout nhu trong repo, nen tai ve xong la chep thang vao
 `results/visdrone/` duoc — moi nguoi chi cham vao thu muc size cua minh nen
 khong de len nhau.
 
+## Dong goi checkpoint de chuyen phien
+
+```bash
+python tools/make_resume_zip.py m l        # mac dinh la m va l
+```
+
+Sinh `results/visdrone/upload/vd_resume_<size>.zip` voi cau truc:
+
+```
+vd_yolo26<size>/weights/best.pt     baseline da xong (nguon prune + teacher CWD)
+vd_ours<size>/weights/last.pt       Ours dang train do
+```
+
+Upload thanh Kaggle dataset roi **Add Data** — khong phai dien `MANUAL_LAST`,
+cell resume tu tim thay vi ten thu muc dung bang `BASE_NAME` / `OURS_NAME`.
+
+Script tu mo lai zip, doc `train_args.name` trong tung file va bao neu lech —
+tranh dung lai loi xep nham checkpoint cua size khac.
+
+Baseline chi can `best.pt`: `epochs_of()` thay `epoch = -1` (da strip optimizer
+= train xong) nen tra ve 100 va `train()` bo qua, khong goi `resume` tren mot
+run da ket thuc.
+
 ## Resume thu cong (khi phien bi danh dau **failed**)
 
 Kaggle **khong luu output** cua version bi giet vi qua gio, nen "Add Data ->
