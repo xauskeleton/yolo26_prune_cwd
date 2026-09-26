@@ -192,6 +192,32 @@ Dung layout nhu trong repo, nen tai ve xong la chep thang vao
 `results/visdrone/` duoc — moi nguoi chi cham vao thu muc size cua minh nen
 khong de len nhau.
 
+## Logic nam trong `vd_common.py`, khong nam trong cell notebook
+
+Cell cua notebook duoc luu trong file `.ipynb` **tren Kaggle**, nen `git clone`
+khong va duoc: sua mot loi la phai bat ca 4 nguoi import lai notebook. Da tung
+hong vi chuyen nay — goi resume lam cho ban notebook moi, nguoi chay lai dung
+ban cu, ket qua la baseline khong duoc nhan ra va train lai tu dau 6 tieng.
+
+Gio toan bo logic o `notebooks/share_visdrone/vd_common.py` trong repo, cell
+setup `git pull` moi lan chay. Notebook chi con cau hinh va 6 dong goi ham:
+
+```python
+V.restore(BASE_NAME, OURS_NAME, PRUNED, MANUAL_LAST)
+n_base = V.train(BASE_NAME, MODEL)
+V.prune50(SIZE, BEST_BASE, PRUNED, RATIO)
+n_ours = V.train(OURS_NAME, str(PRUNED), finetune=True, kd=True, ...)
+V.report(SIZE, BASE_NAME, OURS_NAME)
+```
+
+Sua loi trong `vd_common.py` la ca nhom co ngay o lan chay sau.
+
+Kiem tra tu dong:
+
+```bash
+python tools/test_nb_resume.py
+```
+
 ## Dong goi checkpoint de chuyen phien
 
 ```bash

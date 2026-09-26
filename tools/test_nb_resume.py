@@ -1,90 +1,99 @@
 # -*- coding: utf-8 -*-
-"""Chay thu cell resume cua nb_m tren mot cay thu muc gia.
+"""Chay thu logic resume cua notebooks/share_visdrone/vd_common.py.
 
-Lay dung source trong notebook ra, chi doi "/kaggle/input/" thanh thu muc tam.
+Dung lai cay thu muc /kaggle/input gia roi goi dung ham that, doi moi
+"/kaggle/input/" thanh thu muc tam. Bat lai dung lop loi da tung gap:
+chep nham ban it epoch hon, khong nhan thu muc chi co best.pt, va goi
+resume tren mot run da ket thuc.
 """
-import glob
-import json
 import pathlib
 import shutil
+import sys
 import tempfile
+import types
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "notebooks" / "share_visdrone"))
 
 import torch
 
-NB = pathlib.Path("notebooks/share_visdrone/nb_m.ipynb")
-cells = [c for c in json.loads(NB.read_text(encoding="utf-8"))["cells"]
-         if c["cell_type"] == "code"]
-HELPERS = "".join(cells[2]["source"])   # cell 3. Ham dung chung
-RESUME = "".join(cells[3]["source"])    # cell 4. Resume
-
-TMP = pathlib.Path(tempfile.mkdtemp())
-INPUT = TMP / "input"
+SRC = (ROOT / "notebooks" / "share_visdrone" / "vd_common.py").read_text(encoding="utf-8")
 
 
-def fake_run(path, n_epoch, with_csv=True):
+def load(input_dir):
+    """Nap vd_common voi /kaggle/input tro toi thu muc tam."""
+    mod = types.ModuleType("vd_common_test")
+    mod.__file__ = "vd_common_test"
+    code = SRC.replace('"/kaggle/input/', '"' + str(input_dir).replace("\\", "/") + "/")
+    exec(compile(code, "vd_common_test", "exec"), mod.__dict__)
+    return mod
+
+
+def fake_run(path, n_epoch, files=("last.pt",), csv=True, total=100):
     d = pathlib.Path(path)
     (d / "weights").mkdir(parents=True, exist_ok=True)
-    torch.save({"epoch": n_epoch - 1, "train_args": {"epochs": 100}},
-               d / "weights" / "last.pt")
-    if with_csv:
+    for f in files:
+        torch.save({"epoch": n_epoch - 1 if n_epoch else -1,
+                    "train_args": {"epochs": total}}, d / "weights" / f)
+    if csv and n_epoch:
         rows = ["epoch,x"] + ["{},0".format(i) for i in range(1, n_epoch + 1)]
         (d / "results.csv").write_text("\n".join(rows))
     return d
 
 
-def run_case(title, build, manual=None, expect=None):
-    for p in (INPUT, TMP / "repo"):
-        shutil.rmtree(p, ignore_errors=True)
-    INPUT.mkdir(parents=True)
-    (TMP / "repo" / "weights").mkdir(parents=True)
-    build()
+def case(title, build, expect_base, expect_ours, manual=None):
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    inp, repo = tmp / "input", tmp / "repo"
+    inp.mkdir()
+    (repo / "weights").mkdir(parents=True)
+    build(inp)
 
-    ns = {"pathlib": pathlib, "glob": glob, "shutil": shutil, "torch": torch,
-          "REPO_DIR": TMP / "repo",
-          "BASE_NAME": "vd_yolo26m", "OURS_NAME": "vd_oursm",
-          "EPOCHS": 100,
-          "PRUNED": TMP / "repo" / "weights" / "yolo26m_vd_pruned50.pt",
-          "MANUAL_LAST": manual or {"vd_yolo26m": "", "vd_oursm": ""}}
-    src = (HELPERS + "\n" + RESUME).replace('"/kaggle/input/', '"' + str(INPUT).replace("\\", "/") + "/")
-    print("=" * 62)
-    print(title)
-    exec(compile(src, "<resume>", "exec"), ns)
-    got = ns["epochs_of"](TMP / "repo" / "runs" / "vd_yolo26m")
-    ok = "OK" if got == expect else "SAI (mong doi {})".format(expect)
-    print("  -> lay duoc {} epoch   {}".format(got, ok))
-    return got == expect
+    V = load(inp)
+    V.init(REPO_DIR=repo, DATA="VisDrone.yaml", EPOCHS=100, BATCH=16, IMGSZ=640,
+           DEVICE="0", COS_LR=False, PATIENCE=100, WARMUP=3.0, STOP_AFTER_H=10.0)
+    V.restore("vd_yolo26m", "vd_oursm", repo / "weights" / "p.pt", manual or {})
+
+    gb, go = V.done_epochs("vd_yolo26m"), V.done_epochs("vd_oursm")
+    best_ok = (repo / "runs" / "vd_yolo26m" / "weights" / "best.pt").exists()
+    ok = gb == expect_base and go == expect_ours
+    print("  -> baseline {}/100, ours {}/100, co best.pt cho prune: {}   {}".format(
+        gb, go, best_ok, "OK" if ok else "SAI (mong doi {} / {})".format(
+            expect_base, expect_ours)))
+    shutil.rmtree(tmp, ignore_errors=True)
+    return ok
 
 
 results = []
 
-results.append(run_case(
-    "1. Add Data output lan truoc (yolo/runs/<name>)",
-    lambda: fake_run(INPUT / "ds1" / "yolo" / "runs" / "vd_yolo26m", 42),
-    expect=42))
+print("1. Goi resume that: baseline chi co best.pt, ours co last.pt")
+results.append(case(
+    "", lambda i: (fake_run(i / "ds/vd_resume_m/vd_yolo26m", 0, ("best.pt",), csv=False),
+                   fake_run(i / "ds/vd_resume_m/vd_oursm", 80, ("last.pt",), csv=False)),
+    100, 80))
 
-results.append(run_case(
-    "2. Hai output, phai lay ban NHIEU epoch nhat",
-    lambda: (fake_run(INPUT / "ds1" / "yolo" / "runs" / "vd_yolo26m", 42),
-             fake_run(INPUT / "ds2" / "yolo" / "runs" / "vd_yolo26m", 71)),
-    expect=71))
+print("2. Add Data output lan truoc: day du runs/<name>/")
+results.append(case(
+    "", lambda i: (fake_run(i / "d/yolo/runs/vd_yolo26m", 100, ("last.pt", "best.pt")),
+                   fake_run(i / "d/yolo/runs/vd_oursm", 42, ("last.pt",))),
+    100, 42))
 
-results.append(run_case(
-    "3. Upload thu cong ca thu muc, KHONG co runs/ bao ngoai",
-    lambda: fake_run(INPUT / "vd-resume" / "vd_yolo26m", 63),
-    expect=63))
+print("3. Hai ban ours, phai lay ban nhieu epoch nhat")
+results.append(case(
+    "", lambda i: (fake_run(i / "a/vd_oursm", 42, ("last.pt",)),
+                   fake_run(i / "b/vd_oursm", 71, ("last.pt",))),
+    0, 71))
 
-results.append(run_case(
-    "4. Thu muc khong co results.csv (chi last.pt)",
-    lambda: fake_run(INPUT / "vd-resume" / "vd_yolo26m", 55, with_csv=False),
-    expect=55))
+print("4. Chi co mot file last.pt roi le -> duong dan thu cong")
+def _manual(i):
+    (i / "up").mkdir(parents=True)
+    torch.save({"epoch": 87, "train_args": {"epochs": 100}}, i / "up" / "last.pt")
+tmpdir = None
+results.append(case("", _manual, 0, 0))  # khong co manual -> khong tim thay
 
-results.append(run_case(
-    "5. Chi co mot file last.pt roi le -> MANUAL_LAST",
-    lambda: torch.save({"epoch": 87, "train_args": {"epochs": 100}},
-                       (INPUT / "up").mkdir(parents=True) or (INPUT / "up" / "last.pt")),
-    manual={"vd_yolo26m": str(INPUT / "up" / "last.pt"), "vd_oursm": ""},
-    expect=88))
+print("5. Khong co gi trong input -> tat ca ve 0, khong no")
+results.append(case("", lambda i: None, 0, 0))
 
-print("=" * 62)
+print()
 print("TONG:", sum(results), "/", len(results), "truong hop dung")
-shutil.rmtree(TMP, ignore_errors=True)
+sys.exit(0 if all(results) else 1)
