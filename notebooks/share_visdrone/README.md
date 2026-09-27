@@ -70,17 +70,37 @@ nen khong de len ket qua 640, va file gui ve cung kem hau to.
 
 ### Thoi gian: moi phien ket thuc truoc 12h
 
-`STOP_AFTER_H = 9.5`, dem tu luc **bat dau train** chu khong ke setup. Cong don:
+`STOP_AFTER_H = 10.0`, dem tu luc **bat dau train** chu khong ke setup:
 
 | | |
 |---|---|
-| setup + tai VisDrone | ~8 phut |
-| train | 9.5h |
+| setup | ~3 phut |
+| train | 10h |
 | tran mot epoch dang do | ~10 phut *(o 1024 moi epoch ~10 phut)* |
 | val cuoi | ~5 phut |
-| **tong** | **~9.9h** |
+| **tong** | **~10.3h** |
 
-Con hon 2 tieng du truoc moc 12h cua Kaggle.
+Con gan 2 tieng du truoc moc 12h cua Kaggle.
+
+### Dataset: khong tai lai, khong an output
+
+`V.setup_dataset()` o cell 3 xu ly hai chuyen rieng biet:
+
+1. **Khong de dataset vao output.** Truoc day no tai ve `/kaggle/working` nen
+   bi luu thanh output — 2.3 GB moi phien, an vao han muc 20 GB va lam Add Data
+   cham dan. Gio tro sang `/kaggle/temp`, thu muc nhap khong vao output.
+2. **Dung lai tu output cu neu co.** Neu ban Add Data mot output con chua
+   `datasets/VisDrone`, no lien ket mem phan **anh** (chi doc, khong bao gio
+   ghi) va chep phan **nhan** (vai MB — phai chep duoc vi Ultralytics tao file
+   `.cache` canh do, ma `/kaggle/input` chi doc).
+
+Khong tim thay thi de Ultralytics tu tai, mat khoang 30 giay.
+
+Ba truong hop duoc kiem tra tu dong:
+
+```bash
+python tools/test_nb_dataset.py
+```
 
 ### Uoc tinh so phien
 

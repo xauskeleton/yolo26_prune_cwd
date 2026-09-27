@@ -116,6 +116,66 @@ def restore(base_name, ours_name, pruned, manual=None):
         print("{:<9}: {} / {} epoch".format(label, done_epochs(n), CFG["EPOCHS"]))
 
 
+def setup_dataset(name="VisDrone"):
+    """Dung lai dataset tu output cu thay vi tai lai, va khong de no vao output.
+
+    Hai van de rieng biet:
+
+    1. Dataset tai ve nam trong /kaggle/working nen bi luu thanh output - 2.3 GB
+       moi phien, an vao han muc 20 GB va lam Add Data cham dan. Chuyen sang
+       /kaggle/temp (thu muc nhap, KHONG vao output) la het.
+
+    2. Neu phien truoc da luu dataset vao output va ban Add Data no, thi dung
+       lai duoc: lien ket mem phan anh (chi doc, khong bao gio ghi) va chep
+       phan nhan (vai MB, can ghi duoc vi Ultralytics tao file .cache).
+    """
+    from ultralytics.utils import SETTINGS
+
+    kaggle = pathlib.Path("/kaggle").exists()
+    if kaggle and pathlib.Path("/kaggle/temp").exists():
+        root = pathlib.Path("/kaggle/temp/datasets")
+        root.mkdir(parents=True, exist_ok=True)
+        SETTINGS["datasets_dir"] = str(root)
+    else:
+        root = pathlib.Path(SETTINGS["datasets_dir"])
+
+    dst = root / name
+    if (dst / "images" / "val").exists():
+        print("dataset: da co san o", dst)
+        return dst
+
+    src = None
+    if kaggle:
+        for c in glob.glob("/kaggle/input/**/{}/images/val".format(name), recursive=True):
+            src = pathlib.Path(c).parent.parent
+            break
+
+    if src is None:
+        print("dataset: khong thay trong /kaggle/input -> Ultralytics se tu tai"
+              " ve {} (~30 giay)".format(root))
+        return None
+
+    (dst / "images").mkdir(parents=True, exist_ok=True)
+    n_link = n_copy = 0
+    for split in ("train", "val", "test"):
+        s_img = src / "images" / split
+        if s_img.exists():
+            try:
+                (dst / "images" / split).symlink_to(s_img, target_is_directory=True)
+                n_link += 1
+            except OSError:
+                shutil.copytree(s_img, dst / "images" / split)
+                n_copy += 1
+        # Nhan phai CHEP chu khong lien ket: Ultralytics ghi file .cache canh no,
+        # ma /kaggle/input chi doc.
+        s_lab = src / "labels" / split
+        if s_lab.exists() and not (dst / "labels" / split).exists():
+            shutil.copytree(s_lab, dst / "labels" / split)
+
+    print("dataset: dung lai tu {}  ({} lien ket, {} chep)".format(src, n_link, n_copy))
+    return dst
+
+
 def train(name, weights, **extra):
     """Train moi, hoac train TIEP neu phien truoc bi cat ngang.
 
