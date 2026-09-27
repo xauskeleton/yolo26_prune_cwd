@@ -202,15 +202,21 @@ def report(size, base_name, ours_name):
         print("CHUA XONG - Add Data output lan nay roi Save & Run All lai.")
         return
 
+    print("imgsz={}  batch={}".format(CFG["IMGSZ"], CFG["BATCH"]))
+    print()
     print("| Model | Params (M) | AP50 | AP50-95 |")
     print("|---|---:|---:|---:|")
     for label, (par, ap50, ap, _w) in rows:
         print("| {} | {:.2f} | {:.2f} | {:.2f} |".format(label, par, ap50, ap))
 
     vd = CFG["REPO_DIR"] / "results" / "visdrone"
+    # Hau to do phan giai: khong co thi ban 1024 se ghi de len ket qua 640 da
+    # chay xong, va ca hai deu ten yolo26m_vd_baseline.pt.
+    suf = "" if CFG["IMGSZ"] == 640 else "_{}".format(CFG["IMGSZ"])
     saved = []
-    for name, kind, stem in ((base_name, "baseline", "yolo26{}_vd_baseline".format(size)),
-                             (ours_name, "pruned", "yolo26{}_vd_ours50".format(size))):
+    for name, kind, stem in (
+            (base_name, "baseline", "yolo26{}_vd_baseline{}".format(size, suf)),
+            (ours_name, "pruned", "yolo26{}_vd_ours50{}".format(size, suf))):
         ck, lg = vd / "ckpt" / kind / size, vd / "logs" / kind / size
         ck.mkdir(parents=True, exist_ok=True)
         lg.mkdir(parents=True, exist_ok=True)

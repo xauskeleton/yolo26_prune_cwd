@@ -49,6 +49,63 @@ Neu buoc phai doi (vi du het VRAM) thi **bao lai**, dung tu sua rooi im lang.
 `imgsz=640` la muc chuan cua cac bai nen model tren VisDrone (FDM-YOLO,
 YOLOv8n-ACW, cac bang YOLOv8n/s) nen so lieu doi chieu duoc voi ho.
 
+## Do phan giai: 640 xong, dang chay them 1024
+
+Bang chinh o **640** da xong ca 4 size (xem `results/visdrone/README.md`).
+Bon notebook hien tai dat `IMGSZ = 1024` de chay them mot bo doi dau truc tiep
+voi arXiv 2509.12918 — ho bao cao o 1024, va **cung dung batch 8**, nen cau
+hinh khop han.
+
+| imgsz | batch | VRAM (do that / uoc tinh) | T4 15 GB |
+|---|---:|---:|---|
+| 640 | 16 | 7.3 GB *(do that)* | on |
+| **1024** | **8** | ~9.4 GB | **on** |
+| 1280 | 4 | ~7.3 GB | on, nhung batch 4 lam BN vo nghia |
+
+Batch phai ha vi activation tang theo **binh phuong** do phan giai. Teacher
+forward chay FP32 ngoai autocast nen ton them nua.
+
+Doi `IMGSZ` o cell 2 la doi duoc — ten run tu them hau to (`vd_yolo26m_1024`)
+nen khong de len ket qua 640, va file gui ve cung kem hau to.
+
+### Thoi gian: moi phien ket thuc truoc 12h
+
+`STOP_AFTER_H = 9.5`, dem tu luc **bat dau train** chu khong ke setup. Cong don:
+
+| | |
+|---|---|
+| setup + tai VisDrone | ~8 phut |
+| train | 9.5h |
+| tran mot epoch dang do | ~10 phut *(o 1024 moi epoch ~10 phut)* |
+| val cuoi | ~5 phut |
+| **tong** | **~9.9h** |
+
+Con hon 2 tieng du truoc moc 12h cua Kaggle.
+
+### Uoc tinh so phien
+
+Lay tu thoi gian do that o 640 nhan 2.56 (ti le binh phuong do phan giai):
+
+| Size | 640 (da xong) | 1024 (uoc tinh) | So phien |
+|---|---:|---:|---:|
+| n | 8.7h | ~22h | 3 |
+| s | 9.5h | ~24h | 3 |
+| m | 12.2h | ~33h | 4 |
+| l | 16.8h | ~43h | 5 |
+
+Tong 15 phien. Quota 30h/tuan moi tai khoan, nen ca bon size o 1024 la khoang
+**4 tuan cua mot nguoi**, hoac mot tuan neu bon nguoi chay song song.
+
+> Neu khong du quota thi **chay moi size m**. Do la size bai doi chung dung,
+> va la size duy nhat can de co dong so sanh truc tiep. Bon size o 640 van la
+> bang chinh.
+
+### Rieng size l
+
+`nb_l` o 1024 chay student l cong teacher l (FP32). Neu bao CUDA out of memory
+thi **dung tu ha batch**, bao lai — batch khac nhau thi BatchNorm chuan hoa
+tren so mau khac nhau, hai dong 1024 het so sanh duoc voi nhau.
+
 ## Sieu tham so
 
 Da doc `train_args` tu chinh cac checkpoint VOC. **Cac run VOC theo size KHONG
