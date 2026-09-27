@@ -7,21 +7,26 @@ Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size.
 
 ## Bang chinh
 
-Do tren VisDrone2019-DET val (548 anh, 38759 vat the), imgsz 640.
+VisDrone2019-DET **val** (548 anh, 38,759 vat the), imgsz 640, 100 epoch.
 
-| Model | Params (M) | GFLOPs | AP50 | AP50-95 |
-|---|---:|---:|---:|---:|
-| YOLO26-N | 2.38 | 5.2 | 34.80 | 19.70 |
-| **Ours-N** | **1.07** | **2.5** | **28.96** | **16.30** |
-| YOLO26-S | 9.47 | 20.5 | 41.36 | 24.81 |
-| **Ours-S** | **4.01** | **8.1** | **35.84** | **20.81** |
-| YOLO26-M | 20.36 | 67.9 | 46.90 | 28.70 |
-| **Ours-M** | **7.43** | **23.1** | **42.70** | **25.30** |
-| YOLO26-L | 24.75 | 86.1 | 48.27 | 29.49 |
-| **Ours-L** | **9.63** | **31.2** | **44.70** | **26.92** |
+| Model | Params (M) | GFLOPs | AP50 | AP50-95 | APs |
+|---|---:|---:|---:|---:|---:|
+| YOLO26-N | 2.38 | 5.2 | 34.80 | 19.70 | 10.16 |
+| **Ours-N** | **1.07** | **2.5** | **28.96** | **16.30** | **7.57** |
+| YOLO26-S | 9.47 | 20.5 | 41.36 | 24.81 | 13.89 |
+| **Ours-S** | **4.01** | **8.1** | **35.84** | **20.81** | **11.15** |
+| YOLO26-M | 20.36 | 67.9 | 46.90 | 28.70 | 18.11 |
+| **Ours-M** | **7.43** | **23.1** | **42.70** | **25.30** | **15.43** |
+| YOLO26-L | 24.75 | 86.1 | 48.27 | 29.49 | 18.67 |
+| **Ours-L** | **9.63** | **31.2** | **44.70** | **26.92** | **16.29** |
 
 Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD tau=9.
-Params/GFLOPs do tren model da fuse.
+Params va GFLOPs do tren model da fuse.
+
+> `AP50` va `AP50-95` lay tu `model.val()` cua Ultralytics; `APs` tu pycocotools
+> (`tools/val_apsmall.py`) vi Ultralytics khong in chi so theo kich thuoc. Hai
+> cong cu lech deu 2.24-2.37 diem nen **`APs` khong cung thang do voi hai cot
+> kia** — dung de so giua cac dong trong bang, dung tru cheo giua cac cot.
 
 | Size | Giam params | Giam GFLOPs | Mat AP50 |
 |---|---:|---:|---:|
@@ -29,6 +34,30 @@ Params/GFLOPs do tren model da fuse.
 | s | -57.7% | -60.5% | **-5.52** |
 | m | -63.5% | -66.0% | **-4.20** |
 | l | -61.1% | -63.8% | **-3.57** |
+
+<details><summary>Ban LaTeX</summary>
+
+```latex
+\begin{tabular}{lrrrrr}
+\toprule
+Model & Params (M) & GFLOPs & AP$_{50}$ & AP$_{50:95}$ & AP$_{S}$ \\
+\midrule
+YOLO26-N & 2.38 & 5.2 & 34.80 & 19.7 & 10.16 \\
+\textbf{Ours-N} & \textbf{1.07} & \textbf{2.5} & \textbf{28.96} & \textbf{16.3} & \textbf{7.57} \\
+\midrule
+YOLO26-S & 9.47 & 20.5 & 41.36 & 24.81 & 13.89 \\
+\textbf{Ours-S} & \textbf{4.01} & \textbf{8.1} & \textbf{35.84} & \textbf{20.81} & \textbf{11.15} \\
+\midrule
+YOLO26-M & 20.36 & 67.9 & 46.90 & 28.70 & 18.11 \\
+\textbf{Ours-M} & \textbf{7.43} & \textbf{23.1} & \textbf{42.7} & \textbf{25.3} & \textbf{15.43} \\
+\midrule
+YOLO26-L & 24.75 & 86.1 & 48.27 & 29.49 & 18.67 \\
+\textbf{Ours-L} & \textbf{9.63} & \textbf{31.2} & \textbf{44.7} & \textbf{26.92} & \textbf{16.29} \\
+\bottomrule
+\end{tabular}
+```
+
+</details>
 
 ## Ket qua manh nhat: prune thang model to hon la chon model nho
 
