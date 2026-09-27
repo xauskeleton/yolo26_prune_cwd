@@ -86,6 +86,9 @@ Muc giam **giam deu theo kich thuoc model**: n -5.84, s -5.52, m -4.20,
 l -3.57. Bon diem, don dieu, khong co ngoai le — model cang lon cang chiu prune
 tot, hop ly vi kenh du thua cang nhieu.
 
+Tinh tuong doi tren nen AP50 thi VisDrone mat **9.0%** (4.20 tren 46.90) con VOC
+chi mat **1.2%** (1.08 tren 89.04) — gap 7 lan.
+
 ### 2. Ti le nen kenh chi ~1.5x du dat prune ratio 0.5
 
 | size | tong kenh | sau prune | ti le |
@@ -128,37 +131,62 @@ cho khop `max_det` cua Ultralytics.
 |---|---|---:|---:|---:|
 | **n** | YOLO26 | 10.16 | 26.71 | 40.84 |
 | | Ours | 7.57 | 22.09 | 34.55 |
-| | *mat* | *-25.5%* | *-17.3%* | *-15.4%* |
+| | *mat (diem)* | *-2.59* | *-4.62* | *-6.29* |
+| | *mat (tuong doi)* | *-25.5%* | *-17.3%* | *-15.4%* |
 | **s** | YOLO26 | 13.89 | 33.13 | 45.99 |
 | | Ours | 11.15 | 27.85 | 41.47 |
-| | *mat* | *-19.7%* | *-15.9%* | *-9.8%* |
+| | *mat (diem)* | *-2.74* | *-5.28* | *-4.52* |
+| | *mat (tuong doi)* | *-19.7%* | *-15.9%* | *-9.8%* |
 | **m** | YOLO26 | 18.11 | 37.26 | 54.13 |
 | | Ours | 15.43 | 33.22 | 42.24 |
-| | *mat* | *-14.8%* | *-10.8%* | *-22.0%* |
+| | *mat (diem)* | *-2.68* | *-4.04* | *-11.89* |
+| | *mat (tuong doi)* | *-14.8%* | *-10.8%* | *-22.0%* |
 | **l** | YOLO26 | 18.67 | 38.83 | 54.12 |
 | | Ours | 16.29 | 36.13 | 48.4 |
-| | *mat* | *-12.7%* | *-7.0%* | *-10.6%* |
+| | *mat (diem)* | *-2.38* | *-2.70* | *-5.72* |
+| | *mat (tuong doi)* | *-12.7%* | *-7.0%* | *-10.6%* |
 
-**Vat nho chiu thiet nang nhat o moi size** — `APs` mat nhieu hon `APm`
-trong ca 4 truong hop. Do la loi giai thich cho con so -4.20 cua VisDrone so
-voi -1.08 cua VOC: VisDrone gan nhu toan vat nho, con VOC thi khong.
+### Doc bang nay cho can than: hai don vi cho hai ket luan nguoc nhau
 
-Muc thiet cung giam dan theo kich thuoc model: n mat -25.5% APs, l chi mat
--12.7% — khop voi xu huong cua AP50 tong the.
+**Theo diem tuyet doi**, `APs` mat IT hon `APm` o ca 4 size:
+n -2.59 so voi -4.62, s -2.74 so voi -5.28, m -2.68 so voi -4.04,
+l -2.38 so voi -2.70.
 
-> **Hai canh bao khi dung bang nay.**
->
-> 1. So pycocotools thap hon so Ultralytics **deu dan 2.24-2.37 diem** o ca 8
->    model (vd YOLO26-M: 44.56 so voi 46.90). Da kiem tra khong phai do
->    `maxDets` — sua thanh 300 cho khop van y nguyen. Day la khac biet phuong
->    phap cham diem da biet giua hai cong cu. Do lech deu nen so sanh tuong doi
->    khong bi anh huong, nhung **dung tron hai nguon trong cung mot bang**.
->
-> 2. Ba cot kich thuoc cua arXiv 2509.12918 **khong doi chieu duoc**: bang cua
->    ho co APmedium 66.2 trong khi AP50 chi 50.2, va APsmall 41.3 trong khi AP
->    chi 28.3. Voi dinh nghia COCO chuan thi khong the nhu vay, nen ho dang
->    dung mot thang do khac. Cot APs o day dung de giai thich noi bo, khong
->    phai de so truc tiep voi ho.
+**Theo ti le tuong doi** thi nguoc lai, `APs` mat NHIEU nhat o ca 4 size:
+-25.5%, -19.7%, -14.8%, -12.7%.
+
+Ca hai deu dung, chi khac cach chuan hoa. Vi `APs` co nen rat thap (10-19)
+nen cung mot so diem mat di se thanh ti le lon hon.
+
+> **Dung vien cau "vat nho chiu thiet nang nhat" ma khong noi ro don vi.**
+> Reviewer nhin cot diem tuyet doi se thay dieu nguoc lai. Neu dung khung
+> tuong doi thi phai ghi thang la tuong doi, va nen dua ca hai cot.
+
+### Thu thuc su vung
+
+`APs` mat gan nhu **mot hang so 2.4-2.7 diem** bat ke kich thuoc model
+(-2.59 / -2.74 / -2.68 / -2.38), trong khi `APm` mat giam dan theo kich thuoc
+(-4.62 / -5.28 / -4.04 / -2.70). Model lon hon phuc hoi duoc vat vua nhung
+khong phuc hoi duoc vat nho.
+
+Ve cau hoi vi sao VisDrone mat 4.20 con VOC chi mat 1.08: so sanh tuong doi
+ro hon nhieu — 4.20 tren nen AP50 46.90 la **9.0%**, con 1.08 tren nen 89.04
+chi la **1.2%**. VisDrone kho hon han ngay tu dau, khong chi la chuyen kich
+thuoc vat the.
+
+> **Canh bao 1.** So pycocotools thap hon so Ultralytics **deu dan 2.24-2.37
+> diem** o ca 8 model (vd YOLO26-M: 44.56 so voi 46.90). Da loai tru nguyen
+> nhan `maxDets` — sua tu 100 thanh 300 cho khop, do lech van y nguyen. Day la
+> khac biet phuong phap cham diem giua hai cong cu. Do lech deu nen so sanh
+> tuong doi khong bi anh huong, nhung **dung tron hai nguon trong mot bang**.
+
+> **Canh bao 2.** Ba cot kich thuoc cua arXiv 2509.12918 **khong doi chieu
+> duoc**: bang ho co APmedium 66.2 trong khi AP50 chi 50.2, va APsmall 41.3
+> trong khi AP chi 28.3. Voi dinh nghia COCO chuan thi khong the nhu vay.
+
+> **Canh bao 3.** `APl` cua size m mat 11.89 diem trong khi cac size khac chi
+> mat 4.5-6.3. VisDrone co rat it vat lon nen cot nay nhieu — dung xay lap luan
+> len no.
 
 ## Giao thuc
 
