@@ -78,12 +78,20 @@ tam nen dung cho bang VisDrone.
 
 ## Trang thai
 
-| Size | Baseline | Ours | Thoi gian |
-|---|---|---|---|
-| n | **xong** | **xong** | 4.14h + 4.51h |
-| s | **xong** | **xong** | 4.42h + 5.03h |
-| m | **xong** | **xong** | 6.15h + 6.0h |
-| l | **xong** | **xong** | 8.00h + 8.8h |
+| Size | Baseline | Ours | Baseline (100ep) | Ours (100ep) | phut/epoch |
+|---|---|---|---:|---:|---:|
+| n | **xong** | **xong** | 4.14h | 4.51h | 2.48 / 2.71 |
+| s | **xong** | **xong** | 4.42h | 5.03h | 2.65 / 3.02 |
+| m | **xong** | **xong** | 6.15h | 7.23h* | 3.69 / 4.34 |
+| l | **xong** | **xong** | 8.00h | 9.02h* | 4.80 / 5.41 |
+
+*Hai o danh dau: run bi cat lam hai phien nen khong co dong "100 epochs
+completed". Suy tu phut/epoch do duoc o phien resume (m: 20 epoch trong 1.45h;
+l: 58 epoch trong 5.23h). Truoc day ghi 6.0h va 8.8h — do la uoc luong, khong
+phai do.
+
+**CWD dat them khoang 15%**: Ours luon cham hon baseline cung size du model nho
+hon 60%, vi teacher forward chay FP32 ngoai autocast moi batch.
 
 **Xong ca 4 size.**
 
