@@ -1,4 +1,18 @@
-# Patch cho torch-pruning 1.6.0
+# Patch cho torch-pruning — KHONG CAN THIET
+
+> **Doc truoc:** patch nay **khong con duoc dung**. `pruning/prune_depgraph.py`
+> chay tren ban pip nguyen goc va dat **90/90 lop**, bang cach bo `chunk` theo
+> dung vi du cua chinh tac gia (`examples/yolov8/yolov8_pruning.py`). Giu lai
+> day chi vi hai loi ben duoi la loi that, co the gui nguoc len upstream.
+>
+> | cach lam | ket qua |
+> |---|---|
+> | ban goc, khong bo chunk | 76/90 |
+> | ban da va, khong bo chunk | 83/90 |
+> | **ban goc, co bo chunk** | **90/90** |
+> | ban da va, co bo chunk | 90/90 |
+>
+> Tuc la bo chunk giai quyet triet de, con va tracer chi do duoc mot nua van de.
 
 `torch-pruning-1.6.0-yolo-c3k2.patch` — sua hai loi lam DepGraph suy sai nhom
 tren khoi C3k2 cua YOLO.
@@ -10,8 +24,7 @@ git clone --depth 1 https://github.com/VainF/Torch-Pruning "Tai lieu/Torch-Pruni
 cd "Tai lieu/Torch-Pruning" && git apply ../../patches/torch-pruning-1.6.0-yolo-c3k2.patch
 ```
 
-`pruning/prune_depgraph.py` tu uu tien ban clone nay neu co, va in ro dang dung
-ban nao.
+`pruning/prune_depgraph.py` **khong** dung ban clone nay — no chay tren ban pip.
 
 ## Loi gi
 
@@ -45,6 +58,7 @@ Sau khi va, moi nut `chunk` bao dung kich thuoc that: `[64,64]`, `[128,128]`,
 `i=3` cho `[]`, roi `offset[1]` vuot bien.
 
 Sua dung phai biet **consumer doc manh nao** — quan he ma torch-pruning khong ghi
-lai luc trace. Do la thay doi thiet ke chu khong phai vet va, nen 7 lop
-`cvN.cv1.bn` con lai lui ve L1. Co y KHONG vet tam bang cach noi rong offset:
-mot nhom sai am tham con nguy hiem hon la bao loi.
+lai luc trace. Do la thay doi thiet ke chu khong phai vet va.
+
+Va do cung la ly do tac gia chon huong khac trong vi du cua ho: bo chunk khoi
+module thay vi day tracer lan theo no. Cach do don gian hon va giai quyet het.
