@@ -21,7 +21,8 @@ yolo/
 │   ├── prune_taylor.py                # Taylor importance pruning
 │   ├── prune_lamp.py                  # LAMP adaptive per-layer pruning
 │   ├── prune_fpgm.py                  # FPGM geometric median pruning
-│   └── prune_random.py                # Random pruning (baseline)
+│   ├── prune_random.py                # Random pruning (baseline)
+│   └── prune_depgraph.py              # DepGraph group importance (CVPR 2023)
 ├── distillation/                       # Knowledge distillation
 │   ├── cwd_loss.py                    # CWD distillation loss
 │   └── kd_losses.py                   # Response KD, FitNets, MGD losses
@@ -117,8 +118,8 @@ model.train(
 - Output: checkpoint chua `dms_a_params` → extract bang `python dms/extract_ratios.py --ckpt <path>`
 - Ket qua: file YAML chua per-layer ratio → dung voi `pruning/prune_*.py --layer-ratio`
 
-### 3. Pruning (6 methods)
-6 pruning methods, tat ca dung chung pipeline tu `pruning/prune_common.py`.
+### 3. Pruning (7 methods)
+7 pruning methods, tat ca dung chung pipeline tu `pruning/prune_common.py`.
 **L1 norm la method chinh**, cho ket qua tot nhat (mAP50-95 >= baseline sau finetune).
 ```bash
 # L1 norm (default, method chinh)
@@ -138,6 +139,9 @@ python pruning/prune_fpgm.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --
 
 # Random (baseline)
 python pruning/prune_random.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
+
+# DepGraph (can: pip install torch-pruning)
+python pruning/prune_depgraph.py --weights weights/best.pt --cfg cfg/yolo26m.yaml --prune-ratio 0.3
 
 # Voi DMS per-layer ratio (bat ky method nao)
 python pruning/prune_bn_gamma.py --weights weights/best.pt --cfg cfg/yolo26m.yaml \
