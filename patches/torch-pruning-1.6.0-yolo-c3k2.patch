@@ -1,0 +1,56 @@
+diff --git a/torch_pruning/dependency/shape_infer.py b/torch_pruning/dependency/shape_infer.py
+index 42497d2..4a95648 100644
+--- a/torch_pruning/dependency/shape_infer.py
++++ b/torch_pruning/dependency/shape_infer.py
+@@ -10,7 +10,8 @@ def init_shape_information(graph):
+         if node.type == ops.OPTYPE.SPLIT:
+             grad_fn = node.grad_fn
+ 
+-            if hasattr(grad_fn, '_saved_self_sizes') or hasattr(grad_fn, '_saved_split_sizes'):
++            if (hasattr(grad_fn, '_saved_self_sizes') or hasattr(grad_fn, '_saved_split_sizes')
++                    or hasattr(grad_fn, '_saved_split_size')):
+                 if hasattr(grad_fn, '_saved_split_sizes') and hasattr(grad_fn, '_saved_dim') :
+                     if grad_fn._saved_dim != 1 and grad_fn._saved_dim < constants.MAX_VALID_DIM: # a temp fix for pytorch==1.11, where the _saved_dim is an uninitialized value like 118745347895359
+                         continue
+@@ -19,7 +20,23 @@ def init_shape_information(graph):
+                 elif hasattr(grad_fn, '_saved_split_size') and hasattr(grad_fn, '_saved_dim'):
+                     if grad_fn._saved_dim != 1 and grad_fn._saved_dim < constants.MAX_VALID_DIM: # a temp fix for pytorch==1.11, where the _saved_dim is an uninitialized value like 118745347895359
+                         continue
+-                    chs = [grad_fn._saved_split_size for _ in range(len(node.outputs))]
++                    # node.outputs counts CONSUMERS of the split, not the number of
++                    # chunks. Using it as the chunk count is wrong whenever one chunk
++                    # feeds several consumers, or a chunk is consumed by a concat that
++                    # also receives other tensors (e.g. YOLO C3k2:
++                    # y = list(cv1(x).chunk(2, 1)); y.extend(m(y[-1])); cat(y, 1)).
++                    # Derive the count from the input width instead.
++                    size = grad_fn._saved_split_size
++                    cin = None
++                    for in_node in node.inputs:
++                        cin = infer_out_channels_recursively(graph, in_node, [0])
++                        if cin:
++                            break
++                    if cin and size:
++                        n_full, rest = divmod(cin, size)
++                        chs = [size] * n_full + ([rest] if rest else [])
++                    else:
++                        chs = [size for _ in range(len(node.outputs))]
+                     node.module.split_sizes = chs
+                 offsets = [0]
+                 for i in range(len(chs)):
+@@ -63,9 +80,15 @@ def infer_out_channels_recursively(graph, node: Node, recursive_depth: list):
+                 ch += sub_ch
+             else:
+                 if in_node.type == ops.OPTYPE.SPLIT and in_node.module.split_sizes is not None:
++                    # node.outputs lists CONSUMERS, which need not line up 1:1 with
++                    # the chunks: one chunk may feed several consumers (YOLO C3k2
++                    # sends y[-1] to both the bottleneck and the concat). Clamp the
++                    # index; chunk() yields equal sizes so any in-range entry is the
++                    # right answer, and this keeps the lookup from overrunning.
++                    sizes = in_node.module.split_sizes
+                     for i, split_out_node in enumerate(in_node.outputs):
+                         if split_out_node == node:
+-                            ch = in_node.module.split_sizes[i]
++                            ch = sizes[i] if i < len(sizes) else sizes[-1]
+                 else:
+                     recursive_depth[0]+=1
+                     ch = infer_out_channels_recursively(graph, in_node, recursive_depth)

@@ -35,6 +35,7 @@ Usage:
 """
 
 import argparse
+import sys
 
 import torch
 import torch.nn as nn
@@ -65,11 +66,19 @@ def compute_depgraph_importance(model, bn_dict, ignore_bn_list, p=2):
         create_masks() -> rang buoc chia het cho divisor va duong finetune giu
         nguyen, nen so sanh trong bang chi khac dung mot bien: tieu chi chon kenh.
     """
+    # Uu tien ban clone da va o "Tai lieu/Torch-Pruning" neu co. Ban pip 1.6.0
+    # suy sai kich thuoc chunk cua C3k2 (xem patches/ va ghi chu cuoi file).
+    _local = ROOT / "Tai lieu" / "Torch-Pruning"
+    if (_local / "torch_pruning").is_dir() and str(_local) not in sys.path:
+        sys.path.insert(0, str(_local))
     try:
         import torch_pruning as tp
     except ImportError:
         raise SystemExit(
             "Thieu torch-pruning. Cai bang:  pip install torch-pruning")
+    print("  torch-pruning: {} ({})".format(
+        tp.__version__,
+        "ban da va" if "Tai lieu" in tp.__file__ else "ban pip, chua va"))
 
     net = model.model
 
@@ -101,28 +110,22 @@ def compute_depgraph_importance(model, bn_dict, ignore_bn_list, p=2):
             continue
 
         idxs = list(range(conv.out_channels))
-        group = DG.get_pruning_group(conv, tp.prune_conv_out_channels, idxs=idxs)
-
         try:
+            # get_pruning_group cung co the no, khong chi imp_fn: voi 7 lop
+            # cvN.cv1.bn thi update_split_index_mapping cat offsets[i:i+2] ra
+            # danh sach ngan hon 2 roi truy cap offset[1].
+            group = DG.get_pruning_group(conv, tp.prune_conv_out_channels, idxs=idxs)
             scores = imp_fn(group)
             n_full += 1
             group_sizes.append(len(group))
         except Exception:
-            # Loc bo thanh vien co chi so vuot chieu cua no (nut chunk/split)
-            kept = tp.dependency.Group()
-            kept._DG = DG
-            for dep, di in group:
-                if _fits(dep, di):
-                    kept.add_dep(dep, di)
-            try:
-                scores = imp_fn(kept)
-                n_partial += 1
-                group_sizes.append(len(kept))
-            except Exception:
-                scores = conv.weight.data.abs().sum(dim=[1, 2, 3])
-                n_fallback += 1
-                importance[bn_name] = scores
-                continue
+            # Khong dung duoc nhom -> lui ve L1 cua rieng conv do. Co y KHONG
+            # vet tam bang cach noi rong offset: nhom sai am tham con nguy hiem
+            # hon la bao loi.
+            scores = conv.weight.data.abs().sum(dim=[1, 2, 3])
+            n_fallback += 1
+            importance[bn_name] = scores.detach().float().cpu()
+            continue
 
         if scores.numel() != bn.weight.shape[0]:
             scores = conv.weight.data.abs().sum(dim=[1, 2, 3])
@@ -177,3 +180,29 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# Ghi chu: hai loi cua torch-pruning 1.6.0 tren khoi C3k2 cua YOLO
+# ---------------------------------------------------------------------------
+# C3k2 lam:  y = list(cv1(x).chunk(2, 1));  y.extend(m(y[-1]));  cv2(cat(y, 1))
+# Tuc la mot manh cua chunk vua chay thang vao concat, vua di qua bottleneck.
+#
+# 1. shape_infer.init_shape_information: dieu kien ngoai chi kiem
+#    `_saved_self_sizes` hoac `_saved_split_sizes` (SO NHIEU). PyTorch 2.6 sinh
+#    `SplitBackward0` cho chunk(), chi co `_saved_split_size` (SO IT) — nen
+#    nhanh xu ly so it ben trong khong bao gio chay toi, moi thu roi xuong nhanh
+#    suy nguoc qua concat va cho ra kich thuoc rac (vd [768, 768, 256, 256] cho
+#    mot chunk that su la [256, 256]).
+#
+# 2. Cung ham do dung `len(node.outputs)` lam so manh. node.outputs dem BEN TIEU
+#    THU chu khong phai so manh — mot manh nuoi nhieu noi thi lech ngay.
+#
+# Hai cho nay da va trong patches/torch-pruning-1.6.0-yolo-c3k2.patch
+# -> so lop tinh duoc diem nhom: 76/90 lenh 83/90.
+#
+# 3. CHUA va duoc: index_mapping.update_split_index_mapping dung
+#    `offsets[i:i+2]` cung lap theo ben tieu thu. Sua dung phai biet consumer
+#    doc MANH NAO, ma TP khong ghi lai quan he do luc trace. Do la thay doi
+#    thiet ke chu khong phai vet va. 7 lop `cvN.cv1.bn` con lai vi the lui ve
+#    L1 va script bao ro so luong.
