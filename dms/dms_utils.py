@@ -16,12 +16,12 @@ Usage:
 
 import re
 
-import yaml
 import torch
-import torch.nn as nn
+import yaml
+from torch import nn
 
-from ultralytics.utils.ops import make_divisible
 from ultralytics.nn.modules.block import Bottleneck, PSABlock
+from ultralytics.utils.ops import make_divisible
 
 try:
     from ultralytics.nn.modules.block_pruned import BottleneckPruned
@@ -33,15 +33,14 @@ except ImportError:
 # PRUNING UTILITIES (shared by prune.py)
 # ============================================================================
 
+
 def make_divisible_channels(channels: int, max_channels: int, divisor: int, min_channels: int = 16) -> int:
-    """
-    Làm tròn channels đến bội số gần nhất của divisor.
-    Dùng make_divisible từ Ultralytics.
+    """Làm tròn channels đến bội số gần nhất của divisor. Dùng make_divisible từ Ultralytics.
 
     Args:
-        channels:     Số channels cần làm tròn
+        channels: Số channels cần làm tròn
         max_channels: Giới hạn trên (không vượt quá origin)
-        divisor:      Số chia (8 hoặc 16)
+        divisor: Số chia (8 hoặc 16)
         min_channels: Giới hạn dưới (mặc định 16, tránh bottleneck quá hẹp)
 
     Returns:
@@ -52,8 +51,7 @@ def make_divisible_channels(channels: int, max_channels: int, divisor: int, min_
 
 
 def get_layer_ratio(layer_name: str, layer_ratio_cfg: dict, default_ratio: float) -> float:
-    """
-    Lấy prune ratio cho một layer cụ thể.
+    """Lấy prune ratio cho một layer cụ thể.
 
     Matching theo thứ tự ưu tiên (specific → general):
     1. Exact match:   'model.0.bn' → 0.1
@@ -64,22 +62,18 @@ def get_layer_ratio(layer_name: str, layer_ratio_cfg: dict, default_ratio: float
     4. Default:       global prune_ratio
 
     Args:
-        layer_name:      Tên BN layer, ví dụ 'model.2.cv1.bn'
+        layer_name: Tên BN layer, ví dụ 'model.2.cv1.bn'
         layer_ratio_cfg: Dict từ YAML, ví dụ {'model.0': 0.1, 'backbone': 0.2}
-        default_ratio:   Global prune ratio nếu không match
+        default_ratio: Global prune ratio nếu không match
 
     Returns:
         float: prune ratio cho layer này
-
-    Example YAML (layer_ratio.yaml):
-        # Giữ nhiều kênh ở layer đầu
+        Example YAML (layer_ratio.yaml): # Giữ nhiều kênh ở layer đầu
         model.0: 0.1
-        model.1: 0.1
-        # Tỉa mạnh ở head
+        model.1: 0.1 # Tỉa mạnh ở head
         model.15: 0.6
         model.18: 0.6
-        model.21: 0.6
-        # Group rules
+        model.21: 0.6 # Group rules
         backbone: 0.3
         head: 0.5
         detect: 0.4
@@ -92,31 +86,30 @@ def get_layer_ratio(layer_name: str, layer_ratio_cfg: dict, default_ratio: float
         return float(layer_ratio_cfg[layer_name])
 
     # 2. Layer index match (model.X)
-    match = re.match(r'(model\.\d+)', layer_name)
+    match = re.match(r"(model\.\d+)", layer_name)
     if match:
         layer_prefix = match.group(1)
         if layer_prefix in layer_ratio_cfg:
             return float(layer_ratio_cfg[layer_prefix])
 
         # 3. Group match
-        layer_idx = int(re.search(r'model\.(\d+)', layer_name).group(1))
+        layer_idx = int(re.search(r"model\.(\d+)", layer_name).group(1))
 
         # detect: Detect head layer (thường là 22)
-        if 'detect' in layer_ratio_cfg and layer_idx >= 22:
-            return float(layer_ratio_cfg['detect'])
+        if "detect" in layer_ratio_cfg and layer_idx >= 22:
+            return float(layer_ratio_cfg["detect"])
         # backbone: model.0 - model.9
-        if 'backbone' in layer_ratio_cfg and layer_idx <= 9:
-            return float(layer_ratio_cfg['backbone'])
+        if "backbone" in layer_ratio_cfg and layer_idx <= 9:
+            return float(layer_ratio_cfg["backbone"])
         # head: model.10 - model.21
-        if 'head' in layer_ratio_cfg and 10 <= layer_idx <= 21:
-            return float(layer_ratio_cfg['head'])
+        if "head" in layer_ratio_cfg and 10 <= layer_idx <= 21:
+            return float(layer_ratio_cfg["head"])
 
     return default_ratio
 
 
 def build_pruned_yaml(cfg, model_size, nc):
-    """
-    Build pruned YAML dynamically from original model config.
+    """Build pruned YAML dynamically from original model config.
 
     Hỗ trợ tất cả model sizes (n, s, m, l, x) bằng cách:
     - Đọc cấu trúc từ original YAML
@@ -132,18 +125,18 @@ def build_pruned_yaml(cfg, model_size, nc):
     Returns:
         dict: Pruned model config ready for DetectionModelPruned
     """
-    with open(cfg, encoding='ascii', errors='ignore') as f:
+    with open(cfg, encoding="ascii", errors="ignore") as f:
         model_yamls = yaml.safe_load(f)
 
     # Get scale parameters: [depth_multiple, width_multiple, max_channels]
-    depth, width, max_ch = model_yamls['scales'][model_size]
+    depth, _width, _max_ch = model_yamls["scales"][model_size]
 
     pruned_yaml = {
-        'nc': nc,
-        'scales': model_yamls['scales'],
-        'scale': model_size,
-        'end2end': model_yamls.get('end2end', False),
-        'reg_max': model_yamls.get('reg_max', 16),
+        "nc": nc,
+        "scales": model_yamls["scales"],
+        "scale": model_size,
+        "end2end": model_yamls.get("end2end", False),
+        "reg_max": model_yamls.get("reg_max", 16),
     }
 
     def map_layer(f, n, m, args):
@@ -151,42 +144,41 @@ def build_pruned_yaml(cfg, model_size, nc):
         # Apply depth to repeat count (giống ultralytics parse_model)
         actual_n = max(round(n * depth), 1) if n > 1 else n
 
-        if m == 'C3k2':
+        if m == "C3k2":
             # C3k2 args: [c2, c3k] hoặc [c2, c3k, e] hoặc [c2, c3k, e, attn]
             # attn=True (arg thứ 4) → dùng C3k2PrunedAttn
             has_attn = len(args) >= 4 and args[3] is True
             if has_attn:
-                return [f, actual_n, 'C3k2PrunedAttn', [args[0], True]]
+                return [f, actual_n, "C3k2PrunedAttn", [args[0], True]]
             # Xác định c3k theo logic Ultralytics (tasks.py line 1651-1654):
             # Size m/l/x: force c3k=True | Size n/s: giữ YAML value
             c3k_val = args[1] if len(args) >= 2 else False
-            if model_size in ('m', 'l', 'x'):
+            if model_size in ("m", "l", "x"):
                 c3k_val = True
             if c3k_val:
-                return [f, actual_n, 'C3k2Pruned', [args[0], True]]
+                return [f, actual_n, "C3k2Pruned", [args[0], True]]
             else:
-                return [f, actual_n, 'C3k2PrunedBn', [args[0], False]]
-        elif m == 'SPPF':
+                return [f, actual_n, "C3k2PrunedBn", [args[0], False]]
+        elif m == "SPPF":
             # SPPF args: [c2, k, n_pool, shortcut] → giữ nguyên
-            return [f, actual_n, 'SPPFPruned', args]
-        elif m == 'C2PSA':
+            return [f, actual_n, "SPPFPruned", args]
+        elif m == "C2PSA":
             # C2PSA args: [c2] hoặc [c2, e] → giữ nguyên
-            return [f, actual_n, 'C2PSAPruned', args]
-        elif m == 'Detect':
-            return [f, actual_n, 'DetectPruned', [nc]]
+            return [f, actual_n, "C2PSAPruned", args]
+        elif m == "Detect":
+            return [f, actual_n, "DetectPruned", [nc]]
         else:
             # Conv, nn.Upsample, Concat → giữ nguyên
             return [f, actual_n, m, args]
 
-    pruned_yaml['backbone'] = [map_layer(*layer) for layer in model_yamls['backbone']]
-    pruned_yaml['head'] = [map_layer(*layer) for layer in model_yamls['head']]
+    pruned_yaml["backbone"] = [map_layer(*layer) for layer in model_yamls["backbone"]]
+    pruned_yaml["head"] = [map_layer(*layer) for layer in model_yamls["head"]]
 
     return pruned_yaml
 
 
 def build_ignore_bn_list(model):
-    """
-    Build list of BN layers that should NOT be pruned.
+    """Build list of BN layers that should NOT be pruned.
 
     Rules (same as trainer.py sparsity setup):
     - Bottleneck with residual (add=True): ignore cv2.bn + parent C3k.cv1.bn
@@ -203,37 +195,36 @@ def build_ignore_bn_list(model):
     for k, m in model.named_modules():
         if isinstance(m, _bn_types):
             if m.add:
-                ignore.append(k + '.cv2.bn')
-                parts = k.split('.')
-                if len(parts) >= 2 and parts[-2] == 'm':
+                ignore.append(k + ".cv2.bn")
+                parts = k.split(".")
+                if len(parts) >= 2 and parts[-2] == "m":
                     parent = k.rsplit(".", 2)[0]
                     ignore.append(parent + ".cv1.bn")
         elif isinstance(m, PSABlock):
             for sub_k, sub_m in m.named_modules():
                 if isinstance(sub_m, nn.BatchNorm2d):
                     ignore.append(f"{k}.{sub_k}")
-            parts = k.split('.')
+            parts = k.split(".")
             if len(parts) >= 2:
                 layer_idx = parts[1]
                 ignore.append(f"model.{layer_idx}.cv1.bn")
     return list(set(ignore))
 
 
-def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=None, conv_module=None):
-    """
-    DEPRECATED: Use DMSMaskManager for taylor importance instead.
+def make_soft_mask_hook(bn_name, a_params, importance="gamma", taylor_buffers=None, conv_module=None):
+    """DEPRECATED: Use DMSMaskManager for taylor importance instead.
 
-    Legacy BN output hook for gamma/l1 importance. Kept for backward compat.
-    For taylor importance, DMSMaskManager applies mask at Conv input with
-    STE ranking + AMP unscale (matching ICML 2024 paper).
+    Legacy BN output hook for gamma/l1 importance. Kept for backward compat. For taylor importance, DMSMaskManager
+    applies mask at Conv input with STE ranking + AMP unscale (matching ICML 2024 paper).
     """
+
     def hook(module, input, output):
         N = module.weight.shape[0]
 
         with torch.no_grad():
-            if importance == 'l1' and conv_module is not None:
+            if importance == "l1" and conv_module is not None:
                 scores = conv_module.weight.data.abs().sum(dim=[1, 2, 3])
-            elif importance == 'taylor' and taylor_buffers is not None and bn_name in taylor_buffers:
+            elif importance == "taylor" and taylor_buffers is not None and bn_name in taylor_buffers:
                 scores = taylor_buffers[bn_name]
                 if scores.max() == scores.min():
                     scores = module.weight.data.abs()
@@ -248,15 +239,15 @@ def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=No
         a = a_params[bn_name]
         mask = torch.sigmoid(N * (c_prime - a))
 
-        if importance == 'taylor' and taylor_buffers is not None and module.training and mask.requires_grad:
+        if importance == "taylor" and taylor_buffers is not None and module.training and mask.requires_grad:
             mask_vals = mask.detach()
+
             def _taylor_backward_hook(grad):
                 with torch.no_grad():
                     taylor_new = (mask_vals * grad) ** 2
                     if not taylor_new.isnan().any() and taylor_new.max() != taylor_new.min():
-                        taylor_buffers[bn_name] = (
-                            taylor_buffers[bn_name] * 0.99 + taylor_new * 0.01
-                        )
+                        taylor_buffers[bn_name] = taylor_buffers[bn_name] * 0.99 + taylor_new * 0.01
+
             mask.register_hook(_taylor_backward_hook)
 
         return output * mask.to(dtype=output.dtype).view(1, -1, 1, 1)
@@ -265,31 +256,31 @@ def make_soft_mask_hook(bn_name, a_params, importance='gamma', taylor_buffers=No
 
 
 class DMSMaskManager:
-    """
-    DMS soft mask manager matching ICML 2024 paper implementation.
+    """DMS soft mask manager matching ICML 2024 paper implementation.
 
     Key improvements over legacy make_soft_mask_hook:
     1. Mask applied at Conv INPUT (pre-hook) instead of BN output
-       → gradient does not pass through activation, more direct importance signal
+    → gradient does not pass through activation, more direct importance signal
     2. STE differentiable ranking: (vm >= 0).float() - vm.detach() + vm
-       → smoother gradient landscape for a param optimization
+    → smoother gradient landscape for a param optimization
     3. AMP grad unscale: grad / scaler before taylor update
-       → correct importance across varying AMP scales
+    → correct importance across varying AMP scales
     4. Supports taylor/snip/fisher importance types
     5. isinf() check in addition to isnan()
     """
 
-    def __init__(self, a_params, taylor_buffers, bn_modules, bn_channels,
-                 grad_scaler_fn=None, taylor_type='taylor', decay=0.99):
+    def __init__(
+        self, a_params, taylor_buffers, bn_modules, bn_channels, grad_scaler_fn=None, taylor_type="taylor", decay=0.99
+    ):
         """
         Args:
-            a_params:       Dict {bn_name: nn.Parameter(a)}
+            a_params: Dict {bn_name: nn.Parameter(a)}
             taylor_buffers: Dict {bn_name: Tensor}
-            bn_modules:     Dict {bn_name: nn.BatchNorm2d}
-            bn_channels:    Dict {bn_name: int}
+            bn_modules: Dict {bn_name: nn.BatchNorm2d}
+            bn_channels: Dict {bn_name: int}
             grad_scaler_fn: Callable → float (AMP scale), 0 = no AMP
-            taylor_type:    'taylor' | 'snip' | 'fisher'
-            decay:          EMA decay (default 0.99)
+            taylor_type: 'taylor' | 'snip' | 'fisher'
+            decay: EMA decay (default 0.99).
         """
         self.a_params = a_params
         self.taylor_buffers = taylor_buffers
@@ -305,8 +296,7 @@ class DMSMaskManager:
         self._mask_cache.clear()
 
     def compute_mask(self, bn_name):
-        """
-        Compute soft mask with STE ranking + taylor backward hook.
+        """Compute soft mask with STE ranking + taylor backward hook.
 
         Paper algorithm:
         1. scores = taylor buffer (fallback |gamma| if all-zero)
@@ -329,8 +319,8 @@ class DMSMaskManager:
 
         # Step 2: STE differentiable ranking (paper Eq.)
         vm = scores.unsqueeze(-1) - scores.unsqueeze(-2)  # [N,N]
-        c_ste = (vm >= 0).float() - vm.detach() + vm       # STE trick
-        c_ranked = c_ste.mean(dim=-1)                       # [0,1] high=important
+        c_ste = (vm >= 0).float() - vm.detach() + vm  # STE trick
+        c_ranked = c_ste.mean(dim=-1)  # [0,1] high=important
 
         # Step 3: soft mask — a = pruning ratio, keep channels with rank > a
         mask = torch.sigmoid((c_ranked - a) * N)
@@ -343,16 +333,15 @@ class DMSMaskManager:
             decay = self.decay
             tb = self.taylor_buffers
 
-            def _taylor_hook(grad, _bn=bn_name, _mv=mask_vals, _gs=grad_scale,
-                             _tt=taylor_type, _d=decay, _tb=tb):
+            def _taylor_hook(grad, _bn=bn_name, _mv=mask_vals, _gs=grad_scale, _tt=taylor_type, _d=decay, _tb=tb):
                 with torch.no_grad():
                     g = grad.float()
                     if _gs != 0:
-                        g = g / _gs                         # AMP unscale
-                    if _tt == 'snip':
+                        g = g / _gs  # AMP unscale
+                    if _tt == "snip":
                         new_t = (_mv * g).abs()
-                    elif _tt == 'fisher':
-                        new_t = g ** 2
+                    elif _tt == "fisher":
+                        new_t = g**2
                     else:  # 'taylor'
                         new_t = (_mv * g) ** 2
                     if not new_t.isnan().any() and not new_t.isinf().any():
@@ -365,8 +354,7 @@ class DMSMaskManager:
         return mask
 
     def make_conv_prehook(self, in_bn):
-        """
-        Create Conv forward pre-hook that applies mask to input channels.
+        """Create Conv forward pre-hook that applies mask to input channels.
 
         Args:
             in_bn: str (single BN), list[str] (concat), or None
@@ -396,7 +384,8 @@ class DMSMaskManager:
                             masks.append(torch.ones(ch, device=x.device))
                 if masks:
                     full_mask = torch.cat(masks).to(dtype=x.dtype).view(1, -1, 1, 1)
-                    return (x * full_mask,) + input[1:]
+                    return (x * full_mask, *input[1:])
+
             return hook
         else:
             if in_bn not in self.a_params:
@@ -406,19 +395,19 @@ class DMSMaskManager:
             def hook(module, input):
                 x = input[0]
                 mask = manager.compute_mask(single_bn)
-                return (x * mask.to(dtype=x.dtype).view(1, -1, 1, 1),) + input[1:]
+                return (x * mask.to(dtype=x.dtype).view(1, -1, 1, 1), *input[1:])
+
             return hook
 
     def register_all_hooks(self, conv_bn_map, modules_dict):
-        """
-        Register Conv pre-hooks for all Convs with prunable input BNs.
+        """Register Conv pre-hooks for all Convs with prunable input BNs.
 
         Returns:
             List of hook handles
         """
         hooks = []
         for conv_name, info in conv_bn_map.items():
-            in_bn = info.get('in_bn')
+            in_bn = info.get("in_bn")
             hook_fn = self.make_conv_prehook(in_bn)
             if hook_fn is not None:
                 conv_module = modules_dict.get(conv_name)
@@ -428,9 +417,8 @@ class DMSMaskManager:
         return hooks
 
 
-def profile_per_layer_flops(model, imgsz=640, device='cuda'):
-    """
-    Profile FLOPs (MACs) per Conv2d layer using forward hooks.
+def profile_per_layer_flops(model, imgsz=640, device="cuda"):
+    """Profile FLOPs (MACs) per Conv2d layer using forward hooks.
 
     Args:
         model: YOLOv26 model (unwrapped)
@@ -446,10 +434,17 @@ def profile_per_layer_flops(model, imgsz=640, device='cuda'):
     def _make_hook(name):
         def _hook(module, inp, output):
             h, w = output.shape[2:]
-            macs = (module.in_channels * module.out_channels
-                    * module.kernel_size[0] * module.kernel_size[1]
-                    * h * w / module.groups)
+            macs = (
+                module.in_channels
+                * module.out_channels
+                * module.kernel_size[0]
+                * module.kernel_size[1]
+                * h
+                * w
+                / module.groups
+            )
             flops_dict[name] = macs * 2  # 1 MAC = 2 FLOPs
+
         return _hook
 
     for name, m in model.named_modules():
@@ -475,12 +470,10 @@ def profile_per_layer_flops(model, imgsz=640, device='cuda'):
 
 
 def build_conv_bn_mapping(model, ignore_bn_list):
-    """
-    Build mapping from Conv2d to output BN + input BN (for exact FLOPs).
+    """Build mapping from Conv2d to output BN + input BN (for exact FLOPs).
 
-    Uses model YAML topology to track which BN feeds into each conv's input.
-    FLOPs = in_channels × out_channels × k² × H × W / groups
-    After pruning: in_ch_eff = in_ch × (1-a_in), out_ch_eff = out_ch × (1-a_out)
+    Uses model YAML topology to track which BN feeds into each conv's input. FLOPs = in_channels × out_channels × k² × H
+    × W / groups After pruning: in_ch_eff = in_ch × (1-a_in), out_ch_eff = out_ch × (1-a_out)
 
     Args:
         model: Unwrapped model (with .yaml attribute)
@@ -488,8 +481,8 @@ def build_conv_bn_mapping(model, ignore_bn_list):
 
     Returns:
         (dict, dict):
-            conv_bn_map: {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
-            bn_channels: {bn_name: num_features}
+        conv_bn_map: {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
+        bn_channels: {bn_name: num_features}
     """
     # Collect BN channel counts
     bn_channels = {}
@@ -498,21 +491,21 @@ def build_conv_bn_mapping(model, ignore_bn_list):
             bn_channels[name] = m.num_features
 
     # Parse YAML topology
-    yaml_cfg = getattr(model, 'yaml', {})
-    layers = yaml_cfg.get('backbone', []) + yaml_cfg.get('head', [])
+    yaml_cfg = getattr(model, "yaml", {})
+    layers = yaml_cfg.get("backbone", []) + yaml_cfg.get("head", [])
 
     # Step 1: Output BN for each top-level layer index
     idx_to_out_bn = {}
     for i, (f, n, m_type, args) in enumerate(layers):
         base = f"model.{i}"
-        if m_type == 'Conv':
-            idx_to_out_bn[i] = base + '.bn'
-        elif m_type in ('C3k2', 'SPPF', 'C2PSA'):
-            idx_to_out_bn[i] = base + '.cv2.bn'
-        elif m_type == 'nn.Upsample':
+        if m_type == "Conv":
+            idx_to_out_bn[i] = base + ".bn"
+        elif m_type in ("C3k2", "SPPF", "C2PSA"):
+            idx_to_out_bn[i] = base + ".cv2.bn"
+        elif m_type == "nn.Upsample":
             src = f if f >= 0 else i + f
             idx_to_out_bn[i] = idx_to_out_bn.get(src)
-        elif m_type == 'Concat':
+        elif m_type == "Concat":
             src_list = [fi if fi >= 0 else i + fi for fi in (f if isinstance(f, list) else [f])]
             concat_bns = []
             for si in src_list:
@@ -547,7 +540,7 @@ def build_conv_bn_mapping(model, ignore_bn_list):
     # Map each scale index to its backbone output BN.
     detect_scale_inputs = {}  # {layer_idx: {scale_i: bn_name}}
     for i, (f, n, m_type, args) in enumerate(layers):
-        if 'Detect' in str(m_type):
+        if "Detect" in str(m_type):
             f_list = f if isinstance(f, list) else [f]
             for scale_i, fi in enumerate(f_list):
                 src = fi if fi >= 0 else i + fi
@@ -557,25 +550,25 @@ def build_conv_bn_mapping(model, ignore_bn_list):
     # Step 3: Per-conv mapping
     mapping = {}
     for name, m in model.named_modules():
-        if not (isinstance(m, nn.Conv2d) and name.endswith('.conv')):
+        if not (isinstance(m, nn.Conv2d) and name.endswith(".conv")):
             continue
 
-        out_bn = name[:-4] + 'bn'
-        is_dw = (m.groups == m.in_channels and m.in_channels > 1)
-        parts = name.split('.')
+        out_bn = name[:-4] + "bn"
+        is_dw = m.groups == m.in_channels and m.in_channels > 1
+        parts = name.split(".")
         layer_idx = int(parts[1])
-        sub = '.'.join(parts[2:])  # e.g. 'conv', 'cv1.conv', 'm.0.m.0.cv1.conv'
+        sub = ".".join(parts[2:])  # e.g. 'conv', 'cv1.conv', 'm.0.m.0.cv1.conv'
 
         # Resolve in_bn
         if is_dw:
-            in_bn = out_bn                          # depthwise: in = out (tied)
-        elif sub == 'conv':
-            in_bn = idx_to_in_bn.get(layer_idx)     # simple Conv layer
-        elif sub == 'cv1.conv':
-            in_bn = idx_to_in_bn.get(layer_idx)     # first conv of C3k2/SPPF/C2PSA
-        elif sub == 'cv2.conv':
-            m_type = layers[layer_idx][2] if layer_idx < len(layers) else ''
-            if m_type == 'SPPF':
+            in_bn = out_bn  # depthwise: in = out (tied)
+        elif sub == "conv":
+            in_bn = idx_to_in_bn.get(layer_idx)  # simple Conv layer
+        elif sub == "cv1.conv":
+            in_bn = idx_to_in_bn.get(layer_idx)  # first conv of C3k2/SPPF/C2PSA
+        elif sub == "cv2.conv":
+            m_type = layers[layer_idx][2] if layer_idx < len(layers) else ""
+            if m_type == "SPPF":
                 # cv2 input = cat(cv1_out, pool1, ..., pool_n)
                 # All from same source → replicate cv1.bn mask
                 cv1_bn = f"model.{layer_idx}.cv1.bn"
@@ -584,10 +577,10 @@ def build_conv_bn_mapping(model, ignore_bn_list):
                     in_bn = [cv1_bn] * (m.in_channels // cv1_ch)
                 else:
                     in_bn = cv1_bn
-            elif m_type == 'C2PSA':
+            elif m_type == "C2PSA":
                 # cv2 input = cat(a, b) from cv1.chunk → 2*c_ = cv1.bn channels
                 in_bn = f"model.{layer_idx}.cv1.bn"
-            elif m_type == 'C3k2':
+            elif m_type == "C3k2":
                 # cv2 input = cat(chunks, m0_out, m1_out, ...)
                 # cv1.bn covers chunks; each m[j] output needs its own BN
                 in_bns = [f"model.{layer_idx}.cv1.bn"]
@@ -608,51 +601,46 @@ def build_conv_bn_mapping(model, ignore_bn_list):
                 in_bn = None
         elif layer_idx in detect_scale_inputs:
             # Detect head convs (cv2/cv3/one2one_cv2/one2one_cv3)
-            in_bn = _resolve_detect_in_bn(name, layer_idx,
-                                          detect_scale_inputs[layer_idx])
+            in_bn = _resolve_detect_in_bn(name, layer_idx, detect_scale_inputs[layer_idx])
         else:
             # Internal bottleneck convs
             in_bn = _resolve_internal_in_bn(name, layer_idx, bn_channels)
 
         mapping[name] = {
-            'out_bn': out_bn,
-            'in_bn': in_bn,
-            'is_depthwise': is_dw,
+            "out_bn": out_bn,
+            "in_bn": in_bn,
+            "is_depthwise": is_dw,
         }
 
     return mapping, bn_channels
 
 
 def _resolve_internal_in_bn(conv_name, layer_idx, bn_channels):
-    """
-    Resolve in_bn for internal module convs inside C3k2 blocks.
+    """Resolve in_bn for internal module convs inside C3k2 blocks.
 
-    Determines module type from ACTUAL model structure (not YAML) by checking
-    whether cv3.bn exists (C3k has cv3, Bottleneck does not).
+    Determines module type from ACTUAL model structure (not YAML) by checking whether cv3.bn exists (C3k has cv3,
+    Bottleneck does not).
 
     Handles 3 naming patterns:
 
-    Pattern A - 4 sub_parts (m.J.cvN.conv):
-      C3k:       cv1/cv2 parallel (both take chunk), cv3 after concat
-      Bottleneck: cv1→cv2 sequential
+    Pattern A - 4 sub_parts (m.J.cvN.conv): C3k: cv1/cv2 parallel (both take chunk), cv3 after concat Bottleneck:
+    cv1→cv2 sequential
 
-    Pattern B - 6 sub_parts (m.J.m.K.cvN.conv):
-      Bottleneck[K] inside C3k[J]
+    Pattern B - 6 sub_parts (m.J.m.K.cvN.conv): Bottleneck[K] inside C3k[J]
 
-    Pattern C - 5 sub_parts (m.J.K.cvN.conv):
-      Attn Sequential: nn.Sequential(Bottleneck, PSABlock)
+    Pattern C - 5 sub_parts (m.J.K.cvN.conv): Attn Sequential: nn.Sequential(Bottleneck, PSABlock)
 
     Args:
         conv_name: Full conv name (e.g., 'model.6.m.0.cv1.conv')
         layer_idx: Top-level layer index
         bn_channels: Dict {bn_name: num_features} from actual model
     """
-    parts = conv_name.split('.')
+    parts = conv_name.split(".")
     sub_parts = parts[2:]  # after 'model.X'
     n_sub = len(sub_parts)
 
     # ---- Pattern A: m.J.cvN.conv (4 sub_parts) ----
-    if n_sub == 4 and sub_parts[0] == 'm':
+    if n_sub == 4 and sub_parts[0] == "m":
         j = int(sub_parts[1])
         cv_name = sub_parts[2]  # 'cv1', 'cv2', or 'cv3'
 
@@ -660,7 +648,7 @@ def _resolve_internal_in_bn(conv_name, layer_idx, bn_channels):
         is_c3k = f"model.{layer_idx}.m.{j}.cv3.bn" in bn_channels
 
         # C3k cv3: input = cat(m(cv1(x)), cv2(x)) → need list of 2 BNs
-        if cv_name == 'cv3':
+        if cv_name == "cv3":
             # Find last Bottleneck in C3k.m for m-branch output BN
             last_k = 0
             while f"model.{layer_idx}.m.{j}.m.{last_k + 1}.cv2.bn" in bn_channels:
@@ -677,45 +665,45 @@ def _resolve_internal_in_bn(conv_name, layer_idx, bn_channels):
             if j == 0:
                 return None  # no single BN for chunk half
             else:
-                return f"model.{layer_idx}.m.{j-1}.cv3.bn"  # prev C3k output
+                return f"model.{layer_idx}.m.{j - 1}.cv3.bn"  # prev C3k output
         else:
             # Bottleneck[J] directly inside C3k2
-            if cv_name == 'cv1':
+            if cv_name == "cv1":
                 if j == 0:
                     return None  # chunk half, no matching single BN
                 else:
-                    return f"model.{layer_idx}.m.{j-1}.cv2.bn"  # prev Bottleneck
-            elif cv_name == 'cv2':
+                    return f"model.{layer_idx}.m.{j - 1}.cv2.bn"  # prev Bottleneck
+            elif cv_name == "cv2":
                 return f"model.{layer_idx}.m.{j}.cv1.bn"  # this Bottleneck's cv1
 
     # ---- Pattern B: m.J.m.K.cvN.conv (6 sub_parts) ----
     # Bottleneck[K] inside C3k[J]
-    if n_sub == 6 and sub_parts[0] == 'm' and sub_parts[2] == 'm':
+    if n_sub == 6 and sub_parts[0] == "m" and sub_parts[2] == "m":
         j = int(sub_parts[1])
         k = int(sub_parts[3])
         cv_name = sub_parts[4]
 
-        if cv_name == 'cv2':
+        if cv_name == "cv2":
             # Bottleneck cv2 → input from this Bottleneck's cv1
-            return conv_name.replace('.cv2.conv', '.cv1.bn')
-        elif cv_name == 'cv1':
+            return conv_name.replace(".cv2.conv", ".cv1.bn")
+        elif cv_name == "cv1":
             if k == 0:
                 # First Bottleneck → input from C3k[J].cv1 output
                 return f"model.{layer_idx}.m.{j}.cv1.bn"
             else:
                 # Later Bottleneck → input from prev Bottleneck's cv2
-                return f"model.{layer_idx}.m.{j}.m.{k-1}.cv2.bn"
+                return f"model.{layer_idx}.m.{j}.m.{k - 1}.cv2.bn"
 
     # ---- Pattern C: m.J.K.cvN.conv (5 sub_parts) ----
     # Attn: nn.Sequential(Bottleneck[K=0], PSABlock[K=1]) inside C3k2.m[J]
-    if n_sub == 5 and sub_parts[0] == 'm':
-        j = int(sub_parts[1])   # ModuleList index
+    if n_sub == 5 and sub_parts[0] == "m":
+        j = int(sub_parts[1])  # ModuleList index
         # k = int(sub_parts[2])  # Sequential index (0=Bottleneck)
         cv_name = sub_parts[3]
 
-        if cv_name == 'cv2':
-            return conv_name.replace('.cv2.conv', '.cv1.bn')
-        elif cv_name == 'cv1':
+        if cv_name == "cv2":
+            return conv_name.replace(".cv2.conv", ".cv1.bn")
+        elif cv_name == "cv1":
             if j == 0:
                 return f"model.{layer_idx}.cv1.bn"  # chunk right_half
             else:
@@ -726,8 +714,7 @@ def _resolve_internal_in_bn(conv_name, layer_idx, bn_channels):
 
 
 def _resolve_detect_in_bn(conv_name, layer_idx, scale_inputs):
-    """
-    Resolve in_bn for Detect head convs.
+    """Resolve in_bn for Detect head convs.
 
     Detect head structure per scale I:
         cv2[I] = Sequential(Conv[0], Conv[1], nn.Conv2d[2])
@@ -739,23 +726,23 @@ def _resolve_detect_in_bn(conv_name, layer_idx, scale_inputs):
         layer_idx: e.g. 23
         scale_inputs: {0: 'model.16.cv2.bn', 1: 'model.19.cv2.bn', 2: 'model.22.cv2.bn'}
     """
-    parts = conv_name.split('.')
+    parts = conv_name.split(".")
     sub_parts = parts[2:-1]  # after 'model.X', before 'conv'
     # e.g. ['cv2', '0', '1'] or ['cv3', '0', '0', '1'] or ['one2one_cv2', '0', '0']
 
     branch = sub_parts[0]
     indices = sub_parts[1:]
 
-    if branch in ('cv2', 'one2one_cv2'):
+    if branch in ("cv2", "one2one_cv2"):
         # cv2.I.J → indices = ['I', 'J']
         scale_i = int(indices[0])
         j = int(indices[1])
         if j == 0:
             return scale_inputs.get(scale_i)
         else:
-            return f"model.{layer_idx}.{branch}.{scale_i}.{j-1}.bn"
+            return f"model.{layer_idx}.{branch}.{scale_i}.{j - 1}.bn"
 
-    elif branch in ('cv3', 'one2one_cv3'):
+    elif branch in ("cv3", "one2one_cv3"):
         # cv3.I.J.K → indices = ['I', 'J', 'K']
         scale_i = int(indices[0])
         j = int(indices[1])
@@ -766,7 +753,7 @@ def _resolve_detect_in_bn(conv_name, layer_idx, scale_inputs):
             if j == 0:
                 return scale_inputs.get(scale_i)
             else:
-                return f"model.{layer_idx}.{branch}.{scale_i}.{j-1}.1.bn"
+                return f"model.{layer_idx}.{branch}.{scale_i}.{j - 1}.1.bn"
         else:
             # Pointwise after DW
             return f"model.{layer_idx}.{branch}.{scale_i}.{j}.0.bn"
@@ -775,11 +762,10 @@ def _resolve_detect_in_bn(conv_name, layer_idx, scale_inputs):
 
 
 def _soft_mask_retain(mask):
-    """
-    STE retention from mask (matching ICML 2024 paper soft_mask_sum).
+    """STE retention from mask (matching ICML 2024 paper soft_mask_sum).
 
-    Forward: hard count (channels >= 0.5) / N  → accurate FLOPs estimate
-    Backward: soft sum / N                     → smooth gradient through sigmoid
+    Forward: hard count (channels >= 0.5) / N → accurate FLOPs estimate Backward: soft sum / N → smooth gradient through
+    sigmoid
     """
     N = mask.numel()
     soft = mask.sum() / N
@@ -788,25 +774,23 @@ def _soft_mask_retain(mask):
     return hard - soft.detach() + soft  # STE: forward=hard, backward=soft
 
 
-def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
-                          total_flops, target_ratio, mask_manager=None):
-    """
-    GFLOPs-based resource constraint (differentiable w.r.t a params).
+def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels, total_flops, target_ratio, mask_manager=None):
+    """GFLOPs-based resource constraint (differentiable w.r.t a params).
 
     Paper Eq. 5-6:
         loss = log(r_e / r_t) if r_e > r_t, else 0
 
-    Matching ICML 2024 paper: FLOPs computed through soft mask with STE,
-    so resource gradient flows through the same sigmoid as detection gradient.
+    Matching ICML 2024 paper: FLOPs computed through soft mask with STE, so resource gradient flows through the same
+    sigmoid as detection gradient.
 
     Args:
-        a_params:      Dict {bn_name: nn.Parameter}
-        conv_flops:    Dict {conv_name: flops} from profiling
-        conv_bn_map:   Dict {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
-        bn_channels:   Dict {bn_name: num_features}
-        total_flops:   Total original FLOPs
-        target_ratio:  Target pruning ratio (e.g., 0.3 = remove 30%)
-        mask_manager:  DMSMaskManager instance (compute retention through mask)
+        a_params: Dict {bn_name: nn.Parameter}
+        conv_flops: Dict {conv_name: flops} from profiling
+        conv_bn_map: Dict {conv_name: {'out_bn', 'in_bn', 'is_depthwise'}}
+        bn_channels: Dict {bn_name: num_features}
+        total_flops: Total original FLOPs
+        target_ratio: Target pruning ratio (e.g., 0.3 = remove 30%)
+        mask_manager: DMSMaskManager instance (compute retention through mask)
 
     Returns:
         torch.Tensor: Resource constraint loss (scalar, differentiable)
@@ -830,15 +814,13 @@ def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
             effective_flops = effective_flops + flops
             continue
 
-        out_bn = info['out_bn']
-        in_bn = info.get('in_bn')
-        is_dw = info['is_depthwise']
+        out_bn = info["out_bn"]
+        in_bn = info.get("in_bn")
+        is_dw = info["is_depthwise"]
 
         retain_out = _get_retain(out_bn)
 
-        if is_dw:
-            ratio = retain_out
-        elif in_bn is None:
+        if is_dw or in_bn is None:
             ratio = retain_out
         elif isinstance(in_bn, list):
             total_ch = 0.0
@@ -865,8 +847,8 @@ def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
         loss = torch.tensor(0.0, device=device, requires_grad=True)
 
     # Attach info for logging (detached, no grad)
-    loss.gflops_effective = (effective_flops.detach().item() / 1e9)
-    loss.gflops_total = (total_flops / 1e9)
+    loss.gflops_effective = effective_flops.detach().item() / 1e9
+    loss.gflops_total = total_flops / 1e9
     loss.retention = r_e.detach().item()
     loss.target_retention = r_t
 
@@ -874,8 +856,7 @@ def compute_resource_loss(a_params, conv_flops, conv_bn_map, bn_channels,
 
 
 def compute_l1_loss(model, ignore_bn_list):
-    """
-    L1 penalty on BN gamma weights (drives unimportant channels to zero).
+    """L1 penalty on BN gamma weights (drives unimportant channels to zero).
 
     Args:
         model: Unwrapped model
@@ -892,12 +873,11 @@ def compute_l1_loss(model, ignore_bn_list):
     return l1
 
 
-def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml', divisor=8):
-    """
-    Extract learned `a` params from DMS training checkpoint → YAML.
+def extract_ratios_from_checkpoint(ckpt_path, save_path="dms_ratios.yaml", divisor=8):
+    """Extract learned `a` params from DMS training checkpoint → YAML.
 
-    Clamp per layer theo paper: a ∈ [0, 1 - x_min/x_max]
-    x_min = divisor (minimum channels to keep), x_max = original channels.
+    Clamp per layer theo paper: a ∈ [0, 1 - x_min/x_max] x_min = divisor (minimum channels to keep), x_max = original
+    channels.
 
     Output YAML can be used with: prune.py --layer-ratio dms_ratios.yaml
 
@@ -912,16 +892,20 @@ def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml', divis
     import yaml
 
     ckpt = torch.load(ckpt_path, weights_only=False)
-    a_params = ckpt.get('dms_a_params', {})
+    a_params = ckpt.get("dms_a_params", {})
     if not a_params:
         raise ValueError(f"No dms_a_params found in {ckpt_path}!")
 
     # Get BN channel counts from model state_dict
-    state_dict = ckpt.get('model', ckpt).state_dict() if hasattr(ckpt.get('model', {}), 'state_dict') else ckpt.get('state_dict', {})
+    state_dict = (
+        ckpt.get("model", ckpt).state_dict()
+        if hasattr(ckpt.get("model", {}), "state_dict")
+        else ckpt.get("state_dict", {})
+    )
     bn_channels = {}
     for key, val in state_dict.items():
-        if key.endswith('.bn.weight') or key.endswith('.bn.running_mean'):
-            bn_name = key.rsplit('.', 1)[0]  # remove .weight/.running_mean
+        if key.endswith((".bn.weight", ".bn.running_mean")):
+            bn_name = key.rsplit(".", 1)[0]  # remove .weight/.running_mean
             bn_channels[bn_name] = val.shape[0]
 
     ratios = {}
@@ -932,7 +916,7 @@ def extract_ratios_from_checkpoint(ckpt_path, save_path='dms_ratios.yaml', divis
         val = float(a.clamp(0.0, a_max).item())
         ratios[name] = round(val, 4)
 
-    with open(save_path, 'w') as f:
+    with open(save_path, "w") as f:
         yaml.dump(ratios, f, default_flow_style=False, sort_keys=True)
 
     # Print summary

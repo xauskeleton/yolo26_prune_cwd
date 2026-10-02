@@ -1,5 +1,5 @@
 """
-YOLOv8/YOLOv26 Pruning với Divisibility Constraints
+YOLOv8/YOLOv26 Pruning với Divisibility Constraints.
 ===================================================
 Pruning script với đảm bảo số kênh chia hết cho 8 để tối ưu GPU
 
@@ -20,29 +20,25 @@ Version: 3.0 (with make_divisible)
 Date: February 2025
 """
 
-import re
+from __future__ import annotations
+
+import argparse
 import os
+import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-
-import yaml
-import argparse
 
 import torch
-import torch.nn as nn
-from ultralytics.utils import colorstr, LOGGER
-from ultralytics.utils.ops import make_divisible
-from ultralytics.nn.modules.block import Bottleneck, PSABlock
+import yaml
+from torch import nn
+
 from ultralytics.nn.autobackend import AutoBackend
-from ultralytics.nn.modules import Conv, Concat
-
-from ultralytics.nn.modules.block_pruned import C3k2Pruned, C3k2PrunedBn, C3k2PrunedAttn, SPPFPruned, C2PSAPruned
-from ultralytics.nn.modules.head_pruned import DetectPruned
+from ultralytics.nn.modules.block import Bottleneck
 from ultralytics.nn.tasks_pruned import DetectionModelPruned
+from ultralytics.utils import colorstr
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]
@@ -50,16 +46,15 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))
 
-from dms.dms_utils import make_divisible_channels, get_layer_ratio, build_pruned_yaml, build_ignore_bn_list
-
+from dms.dms_utils import build_ignore_bn_list, build_pruned_yaml, get_layer_ratio, make_divisible_channels
 
 # ============================================================================
 # MAIN PRUNING FUNCTION
 # ============================================================================
 
+
 def main(opt):
-    """
-    Main pruning workflow
+    """Main pruning workflow.
 
     Steps:
     1. Collect BN layers và ignore list (residual connections)
@@ -74,7 +69,6 @@ def main(opt):
     10. Copy weights từ original model
     11. Save pruned model
     """
-
     # Parse options
     weights = opt.weights
     prune_ratio = opt.prune_ratio
@@ -85,19 +79,19 @@ def main(opt):
 
     # Load layer-wise custom ratios nếu có
     layer_ratio_cfg = {}
-    if hasattr(opt, 'layer_ratio') and opt.layer_ratio:
-        with open(opt.layer_ratio, encoding='utf-8') as f:
+    if hasattr(opt, "layer_ratio") and opt.layer_ratio:
+        with open(opt.layer_ratio, encoding="utf-8") as f:
             layer_ratio_cfg = yaml.safe_load(f) or {}
         print(f"  Loaded layer ratio config: {opt.layer_ratio} ({len(layer_ratio_cfg)} rules)")
 
-    print(f"\n{'='*100}")
-    print(f"PRUNING CONFIGURATION:")
+    print(f"\n{'=' * 100}")
+    print("PRUNING CONFIGURATION:")
     print(f"  Model:       {weights}")
     print(f"  Prune ratio: {prune_ratio}")
     print(f"  Divisor:     {divisor}")
     if layer_ratio_cfg:
         print(f"  Layer rules: {layer_ratio_cfg}")
-    print(f"{'='*100}\n")
+    print(f"{'=' * 100}\n")
 
     # Load model
     model = AutoBackend(weights, fuse=False)
@@ -151,7 +145,7 @@ def main(opt):
     # Cơ chế divisor đảm bảo mỗi layer giữ ít nhất divisor channels
     print("\nStep 3: Validate prune ratio...")
     print(f"  Prune ratio: {colorstr(f'{prune_ratio:.3f}')}")
-    print(f"  Mode: per-layer structured (mỗi layer prune {prune_ratio*100:.0f}% channels riêng)")
+    print(f"  Mode: per-layer structured (mỗi layer prune {prune_ratio * 100:.0f}% channels riêng)")
 
     if prune_ratio >= 0.9:
         print(f"  ⚠️ Prune ratio rất cao ({prune_ratio:.2f}), model có thể mất accuracy nghiêm trọng!")
@@ -159,7 +153,7 @@ def main(opt):
         print(f"  ℹ️  Prune ratio cao ({prune_ratio:.2f}), nên fine-tune kỹ sau pruning")
 
     if layer_ratio_cfg:
-        print(f"  Layer-wise custom ratios:")
+        print("  Layer-wise custom ratios:")
         for rule_key, rule_ratio in layer_ratio_cfg.items():
             print(f"    {rule_key}: {float(rule_ratio):.3f}")
 
@@ -176,7 +170,7 @@ def main(opt):
     print(f"  end2end: {pruned_yaml.get('end2end', False)}")
     print(f"  Backbone layers: {len(pruned_yaml['backbone'])}")
     print(f"  Head layers: {len(pruned_yaml['head'])}")
-    for idx, (f, n, m, args) in enumerate(pruned_yaml['backbone'] + pruned_yaml['head']):
+    for idx, (f, n, m, args) in enumerate(pruned_yaml["backbone"] + pruned_yaml["head"]):
         print(f"    [{idx:>2}] n={n} {m:<20} args={args}")
 
     # =========================================
@@ -184,7 +178,9 @@ def main(opt):
     # =========================================
     print(f"\nStep 7: Tạo pruning masks (divisor={divisor})...")
     print("=" * 110)
-    print(f"{'Layer name':<35} | {'Origin':>6} | {'Ratio':>6} | {'Raw':>6} | {'Rounded':>7} | {'Sparsity':>8} | {'Note'}")
+    print(
+        f"{'Layer name':<35} | {'Origin':>6} | {'Ratio':>6} | {'Raw':>6} | {'Rounded':>7} | {'Sparsity':>8} | {'Note'}"
+    )
     print("=" * 110)
 
     maskbndict = {}
@@ -234,8 +230,7 @@ def main(opt):
 
                 # Validate
                 assert mask.sum() > 0, f"BN {name} không có kênh nào!"
-                assert mask.sum() % divisor == 0, \
-                    f"BN {name}: {mask.sum()} channels không chia hết cho {divisor}!"
+                assert mask.sum() % divisor == 0, f"BN {name}: {mask.sum()} channels không chia hết cho {divisor}!"
 
                 # Apply mask
                 module.weight.data.mul_(mask)
@@ -243,17 +238,21 @@ def main(opt):
 
                 remaining = mask.sum().int().item()
                 sparsity = 1 - (remaining / origin_channels)
-                note = "⚙ custom" if name in layer_ratio_cfg or any(
-                    k in name for k in ['backbone', 'head', 'detect']
-                    if k in layer_ratio_cfg
-                ) else ""
+                note = (
+                    "⚙ custom"
+                    if name in layer_ratio_cfg
+                    or any(k in name for k in ["backbone", "head", "detect"] if k in layer_ratio_cfg)
+                    else ""
+                )
 
                 print(
                     f"{name:<35} | {origin_channels:>6} | {this_ratio:>6.2f} | "
                     f"{current_channels:>6} | {remaining:>7} | {sparsity:>8.3f} | {note}"
                 )
             else:
-                print(f"{name:<35} | {origin_channels:>6} | {'  -':>6} | {'  -':>6} | {'  -':>7} | {'  -':>8} | SKIP (residual)")
+                print(
+                    f"{name:<35} | {origin_channels:>6} | {'  -':>6} | {'  -':>6} | {'  -':>7} | {'  -':>8} | SKIP (residual)"
+                )
 
             maskbndict[name] = mask
 
@@ -295,9 +294,9 @@ def main(opt):
     for xks, xvs in current_to_prev.items():
         xvs = [xvs] if not isinstance(xvs, list) else xvs
         for xk, xv in zip([xks] if not isinstance(xks, list) else xks, xvs):
-            assert xk in maskbndict.keys() or 'model.' in xk, f"{xk} from 'current_to_prev' not valid"
+            assert xk in maskbndict or "model." in xk, f"{xk} from 'current_to_prev' not valid"
             if xv is not None:
-                assert xv in maskbndict.keys(), f"{xv} from 'current_to_prev' not in maskbndict"
+                assert xv in maskbndict, f"{xv} from 'current_to_prev' not in maskbndict"
 
     changed = []
 
@@ -306,8 +305,8 @@ def main(opt):
     # C3kPruned.forward: y1=cv1(x), y2=cv2(x), x = right_half → cả cv1 và cv2 cần chunk
     # C3k2PrunedAttn: model.X.m.0.0.cv1.bn (Bottleneck.cv1) cũng nhận right_half
     pattern_c3k_first = re.compile(
-        r"model\.\d+\.m\.0\.(cv1|cv2)\.bn"       # C3k type: first C3k's cv1/cv2
-        r"|model\.\d+\.m\.0\.0\.cv1\.bn"          # Attn type: Bottleneck.cv1 in Sequential
+        r"model\.\d+\.m\.0\.(cv1|cv2)\.bn"  # C3k type: first C3k's cv1/cv2
+        r"|model\.\d+\.m\.0\.0\.cv1\.bn"  # Attn type: Bottleneck.cv1 in Sequential
     )
     pattern_detect = re.compile(r"model\.\d+\.(?:cv\d|one2one_cv\d)\.\d\.2")
 
@@ -315,18 +314,23 @@ def main(opt):
     # SPPFPruned.cv2 input = cv1out * (n+1), cần biết n để tạo đúng mask
     sppf_n_params = {}
     for sppf_name, sppf_module in model.model.named_modules():
-        if hasattr(sppf_module, 'n') and hasattr(sppf_module, 'cv1') and hasattr(sppf_module, 'cv2') \
-                and hasattr(sppf_module, 'm') and isinstance(sppf_module.m, nn.MaxPool2d):
+        if (
+            hasattr(sppf_module, "n")
+            and hasattr(sppf_module, "cv1")
+            and hasattr(sppf_module, "cv2")
+            and hasattr(sppf_module, "m")
+            and isinstance(sppf_module.m, nn.MaxPool2d)
+        ):
             sppf_n_params[sppf_name] = sppf_module.n
     sppf_cv2_pattern = re.compile(r"model\.(\d+)\.cv2\.conv")
 
-    for (name_org, module_org), (name_pruned, module_pruned) in \
-        zip(model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)):
-
+    for (name_org, module_org), (name_pruned, module_pruned) in zip(
+        model.model.named_modules(remove_duplicate=False), pruned_model.named_modules(remove_duplicate=False)
+    ):
         assert name_org == name_pruned, f"name mismatch: {name_org} != {name_pruned}"
 
         # Detect DFL layer - skip (không prune)
-        if 'dfl' in name_org:
+        if "dfl" in name_org:
             continue
 
         # ─────────────────────────────────────
@@ -345,7 +349,7 @@ def main(opt):
         # Xử lý Conv layers
         # ─────────────────────────────────────
         if isinstance(module_org, nn.Conv2d):
-            current_bn_layer_name = name_org[:-4] + 'bn'
+            current_bn_layer_name = name_org[:-4] + "bn"
 
             # Skip nếu không có BN (ví dụ: Detect head Conv2d)
             if current_bn_layer_name not in maskbndict:
@@ -383,7 +387,7 @@ def main(opt):
                     is_bottleneck_cv2 = False
                     m_cv2 = re.fullmatch(r"model\.\d+\.m\.0\.cv2\.bn", current_bn_layer_name)
                     if m_cv2:
-                        parent = current_bn_layer_name.rsplit('.cv2.bn', 1)[0]
+                        parent = current_bn_layer_name.rsplit(".cv2.bn", 1)[0]
                         if f"{parent}.cv3.bn" not in maskbndict:
                             is_bottleneck_cv2 = True
                     if not is_bottleneck_cv2:
@@ -406,7 +410,7 @@ def main(opt):
             expected_out = out_channels_mask.sum().int().item()
 
             if expected_in != module_pruned.in_channels:
-                print(f"\n❌ SHAPE MISMATCH DETECTED:")
+                print("\n❌ SHAPE MISMATCH DETECTED:")
                 print(f"   Layer: {name_org}")
                 print(f"   Expected in_channels: {expected_in}")
                 print(f"   Actual in_channels:   {module_pruned.in_channels}")
@@ -447,7 +451,7 @@ def main(opt):
             module_pruned.running_var = module_org.running_var[out_channels_mask]
 
     # Validate tất cả BN đã được xử lý
-    missing = [name for name in maskbndict.keys() if name not in changed and name not in ignore_bn_list]
+    missing = [name for name in maskbndict if name not in changed and name not in ignore_bn_list]
     assert not missing, f"Missing BN layers: {missing}"
 
     print("   Copy weights hoàn tất!")
@@ -467,19 +471,19 @@ def main(opt):
             "config": {
                 "divisor": divisor,
                 "prune_ratio": prune_ratio,
-            }
+            },
         },
-        save_path
+        save_path,
     )
 
     print(f"   Model saved: {save_path}")
 
     # Test forward
     print("\nTesting forward pass...")
-    model_test = torch.load(save_path,weights_only=False)["model"].cuda()
+    model_test = torch.load(save_path, weights_only=False)["model"].cuda()
     dummies = torch.randn([1, 3, 640, 640], dtype=torch.float32).cuda()
     with torch.no_grad():
-        output = model_test(dummies)
+        model_test(dummies)
     print("   Forward pass successful!")
 
     # Print summary
@@ -488,13 +492,12 @@ def main(opt):
     return maskbndict, pruned_yaml
 
 
-def print_summary(maskbndict: Dict, divisor: int, prune_ratio: float, save_path: str):
-    """In tóm tắt kết quả pruning"""
-
+def print_summary(maskbndict: dict, divisor: int, prune_ratio: float, save_path: str):
+    """In tóm tắt kết quả pruning."""
     total_origin = 0
     total_pruned = 0
 
-    for name, mask in maskbndict.items():
+    for mask in maskbndict.values():
         total_origin += len(mask)
         total_pruned += mask.sum().int().item()
 
@@ -513,40 +516,41 @@ def print_summary(maskbndict: Dict, divisor: int, prune_ratio: float, save_path:
 
 
 def parse_opt():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='YOLO26 Pruning với Divisibility Constraints')
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="YOLO26 Pruning với Divisibility Constraints")
 
     # Basic options
-    parser.add_argument('--weights', type=str,
-                       default=ROOT / 'weights/best.pt',
-                       help='model.pt path')
-    parser.add_argument('--cfg', type=str,
-                       default=ROOT / 'ultralytics/cfg/models/26/yolo26.yaml',
-                       help='model.yaml path')
-    parser.add_argument('--model-size', type=str, default='m',
-                       choices=['n', 's', 'm', 'l', 'x'],
-                       help='model size')
+    parser.add_argument("--weights", type=str, default=ROOT / "weights/best.pt", help="model.pt path")
+    parser.add_argument(
+        "--cfg", type=str, default=ROOT / "ultralytics/cfg/models/26/yolo26.yaml", help="model.yaml path"
+    )
+    parser.add_argument("--model-size", type=str, default="m", choices=["n", "s", "m", "l", "x"], help="model size")
 
     # Pruning options
-    parser.add_argument('--prune-ratio', type=float, default=0.5,
-                       help='prune ratio toàn cục (0.0-1.0)')
-    parser.add_argument('--layer-ratio', type=str, default=None,
-                       help='đường dẫn YAML file chứa custom ratio cho từng layer. '
-                            'Ví dụ: layer_ratio.yaml với nội dung:\n'
-                            '  model.0: 0.1      # layer cụ thể\n'
-                            '  backbone: 0.3     # nhóm backbone\n'
-                            '  head: 0.5         # nhóm head\n'
-                            '  detect: 0.4       # detect head')
+    parser.add_argument("--prune-ratio", type=float, default=0.5, help="prune ratio toàn cục (0.0-1.0)")
+    parser.add_argument(
+        "--layer-ratio",
+        type=str,
+        default=None,
+        help="đường dẫn YAML file chứa custom ratio cho từng layer. "
+        "Ví dụ: layer_ratio.yaml với nội dung:\n"
+        "  model.0: 0.1      # layer cụ thể\n"
+        "  backbone: 0.3     # nhóm backbone\n"
+        "  head: 0.5         # nhóm head\n"
+        "  detect: 0.4       # detect head",
+    )
 
     # Divisibility options
-    parser.add_argument('--divisor', type=int, default=8,
-                       choices=[8, 16],
-                       help='divisor cho channels (8 cho GPU thường, 16 cho Tensor Cores')
+    parser.add_argument(
+        "--divisor",
+        type=int,
+        default=8,
+        choices=[8, 16],
+        help="divisor cho channels (8 cho GPU thường, 16 cho Tensor Cores",
+    )
 
     # Output options
-    parser.add_argument('--save-dir', type=str,
-                       default=ROOT / 'weights',
-                       help='pruned model save directory')
+    parser.add_argument("--save-dir", type=str, default=ROOT / "weights", help="pruned model save directory")
 
     opt = parser.parse_args()
     return opt

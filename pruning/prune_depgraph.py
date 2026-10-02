@@ -1,5 +1,5 @@
 """
-DepGraph Pruning (Dependency Graph)
+DepGraph Pruning (Dependency Graph).
 ===================================
 Based on: Fang et al., "DepGraph: Towards Any Structural Pruning", CVPR 2023
 Library:  torch-pruning (https://github.com/VainF/Torch-Pruning) — cung la repo
@@ -47,11 +47,8 @@ import copy
 import types
 
 import torch
-import torch.nn as nn
-
-from prune_common import (
-    ROOT, load_and_prepare, create_masks, finalize_pruning, add_common_args
-)
+from prune_common import add_common_args, create_masks, finalize_pruning, load_and_prepare
+from torch import nn
 
 
 def _forward_nochunk(self, x):
@@ -64,9 +61,8 @@ def _forward_nochunk(self, x):
 def drop_chunk(root):
     """Thay conv bi chunk doi bang hai conv rieng, giu nguyen trong so.
 
-    Sau buoc nay BN goc `model.X.cv1.bn` (2c kenh) tro thanh hai BN:
-    `model.X.cv0.bn` (c kenh dau) va `model.X.cv1.bn` (c kenh sau) — dung thu
-    tu ma chunk(2, 1) cat.
+    Sau buoc nay BN goc `model.X.cv1.bn` (2c kenh) tro thanh hai BN: `model.X.cv0.bn` (c kenh dau) va `model.X.cv1.bn`
+    (c kenh sau) — dung thu tu ma chunk(2, 1) cat.
     """
     from ultralytics.nn.modules import Conv
     from ultralytics.nn.modules.block import C2f
@@ -96,21 +92,19 @@ def drop_chunk(root):
 def compute_depgraph_importance(model, bn_dict, ignore_bn_list, p=2):
     """Diem quan trong theo nhom cua DepGraph, tra ve per-channel cho moi BN.
 
-    Cung dinh dang voi cac phuong phap khac, de dung chung create_masks() ->
-    rang buoc chia het cho divisor va duong finetune giu nguyen, nen so sanh
-    trong bang chi khac dung mot bien: tieu chi chon kenh.
+    Cung dinh dang voi cac phuong phap khac, de dung chung create_masks() -> rang buoc chia het cho divisor va duong
+    finetune giu nguyen, nen so sanh trong bang chi khac dung mot bien: tieu chi chon kenh.
     """
     try:
         import torch_pruning as tp
     except ImportError:
-        raise SystemExit(
-            "Thieu torch-pruning. Cai bang:  pip install torch-pruning")
+        raise SystemExit("Thieu torch-pruning. Cai bang:  pip install torch-pruning")
     print(f"  torch-pruning {tp.__version__}")
 
     # Ban sao chi de dung do thi. Model that khong bi dong toi.
     net = copy.deepcopy(model.model)
     for prm in net.parameters():
-        prm.requires_grad_(True)   # AutoBackend tat di -> do thi chi con 1 node
+        prm.requires_grad_(True)  # AutoBackend tat di -> do thi chi con 1 node
     n_rep = drop_chunk(net)
     print(f"  Bo chunk o {n_rep} khoi C3k2/C2f")
 
@@ -128,8 +122,7 @@ def compute_depgraph_importance(model, bn_dict, ignore_bn_list, p=2):
         if conv is None or not isinstance(conv, nn.Conv2d):
             return None
         try:
-            g = DG.get_pruning_group(conv, tp.prune_conv_out_channels,
-                                     idxs=list(range(conv.out_channels)))
+            g = DG.get_pruning_group(conv, tp.prune_conv_out_channels, idxs=list(range(conv.out_channels)))
             s = imp_fn(g)
             return s if s.numel() == conv.out_channels else None
         except Exception:
@@ -151,53 +144,56 @@ def compute_depgraph_importance(model, bn_dict, ignore_bn_list, p=2):
             scores = score_of(bn_name)
 
         if scores is None or scores.numel() != bn.weight.shape[0]:
-            # Lui ve L1 cua rieng conv do, va bao ro — khong vet tam am tham.
+            # Lui ve L1 cua rieng conv do, va bao ro — khong vet tam am than.
             conv = orig_mods.get(bn_name[:-2] + "conv")
-            scores = (conv.weight.data.abs().sum(dim=[1, 2, 3]) if conv is not None
-                      else bn.weight.data.abs().view(-1))
+            scores = conv.weight.data.abs().sum(dim=[1, 2, 3]) if conv is not None else bn.weight.data.abs().view(-1)
             n_fallback += 1
         else:
             n_ok += 1
 
         importance[bn_name] = scores.detach().float().cpu()
 
-    print(f"  DepGraph importance: {n_ok}/{n_ok + n_fallback} lop dung diem nhom"
-          + (f", {n_fallback} lui ve L1" if n_fallback else ""))
+    print(
+        f"  DepGraph importance: {n_ok}/{n_ok + n_fallback} lop dung diem nhom"
+        + (f", {n_fallback} lui ve L1" if n_fallback else "")
+    )
     del net
     return importance
 
 
 def main():
-    parser = argparse.ArgumentParser(description='YOLO26 DepGraph Pruning')
+    parser = argparse.ArgumentParser(description="YOLO26 DepGraph Pruning")
     add_common_args(parser)
-    parser.add_argument('--norm-p', type=int, default=2,
-                        help='bac chuan cho diem nhom (mac dinh 2 = L2)')
+    parser.add_argument("--norm-p", type=int, default=2, help="bac chuan cho diem nhom (mac dinh 2 = L2)")
     opt = parser.parse_args()
 
-    print(f"\n{'='*100}")
-    print(f"DEPGRAPH PRUNING  (Fang et al., CVPR 2023)")
+    print(f"\n{'=' * 100}")
+    print("DEPGRAPH PRUNING  (Fang et al., CVPR 2023)")
     print(f"  Model:       {opt.weights}")
     print(f"  Prune ratio: {opt.prune_ratio}")
     print(f"  Divisor:     {opt.divisor}")
     print(f"  Norm:        L{opt.norm_p} tren toan nhom")
-    print(f"{'='*100}\n")
+    print(f"{'=' * 100}\n")
 
-    model, bn_dict, ignore_bn_list, chunk_bn_list, layer_ratio_cfg, pruned_yaml = \
-        load_and_prepare(opt.weights, opt.cfg, opt.model_size, opt.layer_ratio)
-
-    print("\nComputing DepGraph group importance...")
-    importance = compute_depgraph_importance(
-        model, bn_dict, ignore_bn_list, p=opt.norm_p)
-
-    maskbndict = create_masks(
-        importance, model, ignore_bn_list, layer_ratio_cfg,
-        opt.prune_ratio, opt.divisor
+    model, bn_dict, ignore_bn_list, _chunk_bn_list, layer_ratio_cfg, pruned_yaml = load_and_prepare(
+        opt.weights, opt.cfg, opt.model_size, opt.layer_ratio
     )
 
-    save_path = finalize_pruning(
-        model, maskbndict, pruned_yaml, ignore_bn_list,
-        opt.weights, opt.save_dir, opt.divisor, opt.prune_ratio,
-        method_name="depgraph"
+    print("\nComputing DepGraph group importance...")
+    importance = compute_depgraph_importance(model, bn_dict, ignore_bn_list, p=opt.norm_p)
+
+    maskbndict = create_masks(importance, model, ignore_bn_list, layer_ratio_cfg, opt.prune_ratio, opt.divisor)
+
+    finalize_pruning(
+        model,
+        maskbndict,
+        pruned_yaml,
+        ignore_bn_list,
+        opt.weights,
+        opt.save_dir,
+        opt.divisor,
+        opt.prune_ratio,
+        method_name="depgraph",
     )
 
     return maskbndict, pruned_yaml
