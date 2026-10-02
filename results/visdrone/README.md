@@ -9,16 +9,16 @@ Notebook: `notebooks/share_visdrone/` — 4 cai, moi nguoi mot size.
 
 VisDrone2019-DET **val** (548 anh, 38,759 vat the), imgsz 640, 100 epoch.
 
-| Model | Params (M) | GFLOPs | AP50 | AP50-95 | APs |
-|---|---:|---:|---:|---:|---:|
-| YOLO26-N | 2.38 | 5.2 | 34.80 | 19.70 | 10.16 |
-| **Ours-N** | **1.07** | **2.5** | **28.96** | **16.30** | **7.57** |
-| YOLO26-S | 9.47 | 20.5 | 41.36 | 24.81 | 13.89 |
-| **Ours-S** | **4.01** | **8.1** | **35.84** | **20.81** | **11.15** |
-| YOLO26-M | 20.36 | 67.9 | 46.90 | 28.70 | 18.11 |
-| **Ours-M** | **7.43** | **23.1** | **42.70** | **25.30** | **15.43** |
-| YOLO26-L | 24.75 | 86.1 | 48.27 | 29.49 | 18.67 |
-| **Ours-L** | **9.63** | **31.2** | **44.70** | **26.92** | **16.29** |
+| Model      | Params (M) |   GFLOPs |      AP50 |   AP50-95 |       APs |
+| ---------- | ---------: | -------: | --------: | --------: | --------: |
+| YOLO26-N   |       2.38 |      5.2 |     34.80 |     19.70 |     10.16 |
+| **Ours-N** |   **1.07** |  **2.5** | **28.96** | **16.30** |  **7.57** |
+| YOLO26-S   |       9.47 |     20.5 |     41.36 |     24.81 |     13.89 |
+| **Ours-S** |   **4.01** |  **8.1** | **35.84** | **20.81** | **11.15** |
+| YOLO26-M   |      20.36 |     67.9 |     46.90 |     28.70 |     18.11 |
+| **Ours-M** |   **7.43** | **23.1** | **42.70** | **25.30** | **15.43** |
+| YOLO26-L   |      24.75 |     86.1 |     48.27 |     29.49 |     18.67 |
+| **Ours-L** |   **9.63** | **31.2** | **44.70** | **26.92** | **16.29** |
 
 Ours = L1-norm uniform prune 50% (divisor 8) + finetune 100 epoch voi CWD tau=9.
 Params va GFLOPs do tren model da fuse.
@@ -28,12 +28,12 @@ Params va GFLOPs do tren model da fuse.
 > cong cu lech deu 2.24-2.37 diem nen **`APs` khong cung thang do voi hai cot
 > kia** — dung de so giua cac dong trong bang, dung tru cheo giua cac cot.
 
-| Size | Giam params | Giam GFLOPs | Mat AP50 |
-|---|---:|---:|---:|
-| n | -55.0% | -51.9% | **-5.84** |
-| s | -57.7% | -60.5% | **-5.52** |
-| m | -63.5% | -66.0% | **-4.20** |
-| l | -61.1% | -63.8% | **-3.57** |
+| Size | Giam params | Giam GFLOPs |  Mat AP50 |
+| ---- | ----------: | ----------: | --------: |
+| n    |      -55.0% |      -51.9% | **-5.84** |
+| s    |      -57.7% |      -60.5% | **-5.52** |
+| m    |      -63.5% |      -66.0% | **-4.20** |
+| l    |      -61.1% |      -63.8% | **-3.57** |
 
 <details><summary>Ban LaTeX</summary>
 
@@ -61,16 +61,16 @@ YOLO26-L & 24.75 & 86.1 & 48.27 & 29.49 & 18.67 \\
 
 ## Ket qua manh nhat: prune thang model to hon la chon model nho
 
-Cau hoi hien nhien cua reviewer: *"Prune yolo26m lam gi, dung thang yolo26s
-cho roi?"* So lieu tra loi duoc:
+Cau hoi hien nhien cua reviewer: _"Prune yolo26m lam gi, dung thang yolo26s
+cho roi?"_ So lieu tra loi duoc:
 
-| | Params (M) | GFLOPs | AP50 |
-|---|---:|---:|---:|
-| YOLO26-S (nguyen ban) | 9.47 | 20.5 | 41.36 |
-| **Ours-M** (prune tu yolo26m) | **7.43** | 23.1 | **42.70** |
+|                               | Params (M) | GFLOPs |      AP50 |
+| ----------------------------- | ---------: | -----: | --------: |
+| YOLO26-S (nguyen ban)         |       9.47 |   20.5 |     41.36 |
+| **Ours-M** (prune tu yolo26m) |   **7.43** |   23.1 | **42.70** |
 
-**It hon 21.5% tham so, AP50 cao hon 1.34 diem.** GFLOPs nhinh hon 12.7%.
-Ours-L cung vay: 9.63M dat 44.70, hon YOLO26-S **3.34 diem** o cung muc tham so.
+**It hon 21.5% than so, AP50 cao hon 1.34 diem.** GFLOPs nhinh hon 12.7%.
+Ours-L cung vay: 9.63M dat 44.70, hon YOLO26-S **3.34 diem** o cung muc than so.
 
 Nghia la mo hinh nen tu ban lon **khong phai mot cach xap xi re tien cua ban
 nho** — no o mot diem tot hon han tren duong danh doi. Day la lap luan trung
@@ -78,12 +78,12 @@ tam nen dung cho bang VisDrone.
 
 ## Trang thai
 
-| Size | Baseline | Ours | Baseline (100ep) | Ours (100ep) | phut/epoch |
-|---|---|---|---:|---:|---:|
-| n | **xong** | **xong** | 4.14h | 4.51h | 2.48 / 2.71 |
-| s | **xong** | **xong** | 4.42h | 5.03h | 2.65 / 3.02 |
-| m | **xong** | **xong** | 6.15h | 7.23h* | 3.69 / 4.34 |
-| l | **xong** | **xong** | 8.00h | 9.02h* | 4.80 / 5.41 |
+| Size | Baseline | Ours     | Baseline (100ep) | Ours (100ep) |  phut/epoch |
+| ---- | -------- | -------- | ---------------: | -----------: | ----------: |
+| n    | **xong** | **xong** |            4.14h |        4.51h | 2.48 / 2.71 |
+| s    | **xong** | **xong** |            4.42h |        5.03h | 2.65 / 3.02 |
+| m    | **xong** | **xong** |            6.15h |       7.23h* | 3.69 / 4.34 |
+| l    | **xong** | **xong** |            8.00h |       9.02h* | 4.80 / 5.41 |
 
 *Hai o danh dau: run bi cat lam hai phien nen khong co dong "100 epochs
 completed". Suy tu phut/epoch do duoc o phien resume (m: 20 epoch trong 1.45h;
@@ -102,13 +102,13 @@ m du doan 15h, baseline moi het 6.15h).
 
 ### 1. Gia phai tra tren VisDrone cao gap 5 lan so voi VOC
 
-| | AP50 baseline | AP50 Ours | Chenh |
-|---|---:|---:|---:|
-| VOC (m, prune 50%) | 89.04 | 87.96 | **-1.08** |
-| VisDrone (n) | 34.80 | 28.96 | **-5.84** |
-| VisDrone (s) | 41.36 | 35.84 | **-5.52** |
-| VisDrone (m) | 46.90 | 42.70 | **-4.20** |
-| VisDrone (l) | 48.27 | 44.70 | **-3.57** |
+|                    | AP50 baseline | AP50 Ours |     Chenh |
+| ------------------ | ------------: | --------: | --------: |
+| VOC (m, prune 50%) |         89.04 |     87.96 | **-1.08** |
+| VisDrone (n)       |         34.80 |     28.96 | **-5.84** |
+| VisDrone (s)       |         41.36 |     35.84 | **-5.52** |
+| VisDrone (m)       |         46.90 |     42.70 | **-4.20** |
+| VisDrone (l)       |         48.27 |     44.70 | **-3.57** |
 
 Ket luan "cat 50% gan nhu mien phi" rut ra tu VOC **khong chuyen sang VisDrone**.
 Hop ly: VisDrone toan vat the nho va dong, ma chinh bang per-class tren VOC da
@@ -116,7 +116,7 @@ cho thay nhom vat nho (pottedplant, bottle, chair) chiu thiet nang nhat khi cat
 sau. VisDrone la ca dataset toan nhom do.
 
 > Phai ghi thang dieu nay trong bai, dung im lang. No khong pha ket qua — 1.07M
-> tham so ma giu duoc 83% AP50 cua ban goc van la mot ti le doi tot — nhung
+> than so ma giu duoc 83% AP50 cua ban goc van la mot ti le doi tot — nhung
 > dien giai phai khac voi VOC.
 
 Muc giam **giam deu theo kich thuoc model**: n -5.84, s -5.52, m -4.20,
@@ -129,15 +129,15 @@ chi mat **1.2%** (1.08 tren 89.04) — gap 7 lan.
 ### 2. Ti le nen kenh chi ~1.5x du dat prune ratio 0.5
 
 | size | tong kenh | sau prune | ti le |
-|---|---:|---:|---:|
-| n | 9,496 | 6,440 | 1.47x |
-| s | 18,992 | 12,608 | 1.51x |
-| m | 28,096 | 17,488 | 1.61x |
-| l | 35,264 | 22,976 | 1.53x |
+| ---- | --------: | --------: | ----: |
+| n    |     9,496 |     6,440 | 1.47x |
+| s    |    18,992 |    12,608 | 1.51x |
+| m    |    28,096 |    17,488 | 1.61x |
+| l    |    35,264 |    22,976 | 1.53x |
 
 Vi **34/124 lop BN bi SKIP (residual)** — chung giu nguyen toan bo kenh. Chi
-90 lop con lai bi cat 50%. Ti le tham so thi cao hon (2.2x den 2.9x) vi cac lop
-bi cat nam o cho nhieu tham so.
+90 lop con lai bi cat 50%. Ti le than so thi cao hon (2.2x den 2.9x) vi cac lop
+bi cat nam o cho nhieu than so.
 
 Khi viet bai nho phan biet: "prune ratio 50%" la ti le tren **cac lop prune
 duoc**, khong phai tren toan model.
@@ -152,6 +152,7 @@ giam 2.7 o muc -73.5%. Ta nen it hon ma mat nhieu hon, tuc la **van thua ho**
 neu so thang.
 
 Ba huong giai thich, can chon truoc khi viet:
+
 - Ho co **sparsity training** truoc khi prune (day gamma ve 0), ta cat thang.
 - Ho train bao nhieu epoch chua ro; ta chi 100 epoch = 39% so buoc cua VOC.
 - Ho co the do tren split khac (test-dev thay vi val).
@@ -164,24 +165,24 @@ muc nen thap hon — van trung thuc va van manh.
 Do bang `tools/val_apsmall.py` tren 8 checkpoint trong `ckpt/`, maxDets=300
 cho khop `max_det` cua Ultralytics.
 
-| Size | | APs | APm | APl |
-|---|---|---:|---:|---:|
-| **n** | YOLO26 | 10.16 | 26.71 | 40.84 |
-| | Ours | 7.57 | 22.09 | 34.55 |
-| | *mat (diem)* | *-2.59* | *-4.62* | *-6.29* |
-| | *mat (tuong doi)* | *-25.5%* | *-17.3%* | *-15.4%* |
-| **s** | YOLO26 | 13.89 | 33.13 | 45.99 |
-| | Ours | 11.15 | 27.85 | 41.47 |
-| | *mat (diem)* | *-2.74* | *-5.28* | *-4.52* |
-| | *mat (tuong doi)* | *-19.7%* | *-15.9%* | *-9.8%* |
-| **m** | YOLO26 | 18.11 | 37.26 | 54.13 |
-| | Ours | 15.43 | 33.22 | 42.24 |
-| | *mat (diem)* | *-2.68* | *-4.04* | *-11.89* |
-| | *mat (tuong doi)* | *-14.8%* | *-10.8%* | *-22.0%* |
-| **l** | YOLO26 | 18.67 | 38.83 | 54.12 |
-| | Ours | 16.29 | 36.13 | 48.4 |
-| | *mat (diem)* | *-2.38* | *-2.70* | *-5.72* |
-| | *mat (tuong doi)* | *-12.7%* | *-7.0%* | *-10.6%* |
+| Size  |                   |      APs |      APm |      APl |
+| ----- | ----------------- | -------: | -------: | -------: |
+| **n** | YOLO26            |    10.16 |    26.71 |    40.84 |
+|       | Ours              |     7.57 |    22.09 |    34.55 |
+|       | _mat (diem)_      |  _-2.59_ |  _-4.62_ |  _-6.29_ |
+|       | _mat (tuong doi)_ | _-25.5%_ | _-17.3%_ | _-15.4%_ |
+| **s** | YOLO26            |    13.89 |    33.13 |    45.99 |
+|       | Ours              |    11.15 |    27.85 |    41.47 |
+|       | _mat (diem)_      |  _-2.74_ |  _-5.28_ |  _-4.52_ |
+|       | _mat (tuong doi)_ | _-19.7%_ | _-15.9%_ |  _-9.8%_ |
+| **m** | YOLO26            |    18.11 |    37.26 |    54.13 |
+|       | Ours              |    15.43 |    33.22 |    42.24 |
+|       | _mat (diem)_      |  _-2.68_ |  _-4.04_ | _-11.89_ |
+|       | _mat (tuong doi)_ | _-14.8%_ | _-10.8%_ | _-22.0%_ |
+| **l** | YOLO26            |    18.67 |    38.83 |    54.12 |
+|       | Ours              |    16.29 |    36.13 |     48.4 |
+|       | _mat (diem)_      |  _-2.38_ |  _-2.70_ |  _-5.72_ |
+|       | _mat (tuong doi)_ | _-12.7%_ |  _-7.0%_ | _-10.6%_ |
 
 ### Doc bang nay cho can than: hai don vi cho hai ket luan nguoc nhau
 
@@ -227,20 +228,20 @@ thuoc vat the.
 
 ## Giao thuc
 
-| | |
-|---|---|
-| Dataset | VisDrone2019-DET — 6471 train / 548 val, 10 lop |
-| Split danh gia | `val` (548 anh) |
-| imgsz / batch / seed | 640 / 16 / 0 |
-| epochs | 100 |
-| optimizer | `auto` -> MuSGD (tu chon lr) |
-| cos_lr / patience / warmup | False / 100 / 3.0 |
-| Augmentation | mac dinh Ultralytics, khong tinh chinh rieng |
-| Phan cung | Kaggle Tesla T4 x2, DDP |
-| Prune | L1-norm uniform 50%, divisor 8 |
-| CWD | tau=9, kd_lambda=0.5, kd_layers=neck, kd_warmup=5 |
-| Teacher | baseline cua **chinh size do** |
-| Metric | AP 101-point (Ultralytics) |
+|                            |                                                   |
+| -------------------------- | ------------------------------------------------- |
+| Dataset                    | VisDrone2019-DET — 6471 train / 548 val, 10 lop   |
+| Split danh gia             | `val` (548 anh)                                   |
+| imgsz / batch / seed       | 640 / 16 / 0                                      |
+| epochs                     | 100                                               |
+| optimizer                  | `auto` -> MuSGD (tu chon lr)                      |
+| cos_lr / patience / warmup | False / 100 / 3.0                                 |
+| Augmentation               | mac dinh Ultralytics, khong tinh chinh rieng      |
+| Phan cung                  | Kaggle Tesla T4 x2, DDP                           |
+| Prune                      | L1-norm uniform 50%, divisor 8                    |
+| CWD                        | tau=9, kd_lambda=0.5, kd_layers=neck, kd_warmup=5 |
+| Teacher                    | baseline cua **chinh size do**                    |
+| Metric                     | AP 101-point (Ultralytics)                        |
 
 **Mot config duy nhat cho ca 4 size**, lay tu cau hinh cua m — do la cau hinh
 chinh cua bai. Ly do chi tiet: `notebooks/share_visdrone/README.md`.
@@ -262,14 +263,15 @@ chinh cua bai. Ly do chi tiet: `notebooks/share_visdrone/README.md`.
 [arXiv 2509.12918](https://arxiv.org/abs/2509.12918) — structured pruning theo
 he so BN + CWD tren YOLOv8m/VisDrone cho thiet bi bien:
 
-| | Ho | Ta |
-|---|---|---|
-| Backbone | YOLOv8m | YOLOv26m |
-| Importance | BN gamma | **L1-norm** |
-| Distillation | CWD | CWD |
-| Ket qua | 25.85M -> 6.85M (-73.5%), mAP50 47.9 (-2.7), 26 -> 68 FPS (TRT) | |
+|              | Ho                                                              | Ta          |
+| ------------ | --------------------------------------------------------------- | ----------- |
+| Backbone     | YOLOv8m                                                         | YOLOv26m    |
+| Importance   | BN gamma                                                        | **L1-norm** |
+| Distillation | CWD                                                             | CWD         |
+| Ket qua      | 25.85M -> 6.85M (-73.5%), mAP50 47.9 (-2.7), 26 -> 68 FPS (TRT) |             |
 
 Ba thu ho khong co, phai neu ro trong bai:
+
 - Thuc nghiem cho thay **L1-norm > BN gamma** (ho dung gamma).
 - Khao sat do nhay **tau = 1..10**.
 - Do that tren **Jetson Nano**.
@@ -278,22 +280,22 @@ Ba thu ho khong co, phai neu ro trong bai:
 
 Bang `scales` trong `cfg/yolo26m.yaml`:
 
-| size | depth | width | max_channels |
-|---|---:|---:|---:|
-| n | 0.5 | 0.25 | 1024 |
-| s | 0.5 | 0.50 | 1024 |
-| **m** | **0.5** | **1.0** | **512** |
-| **l** | **1.0** | **1.0** | **512** |
+| size  |   depth |   width | max_channels |
+| ----- | ------: | ------: | -----------: |
+| n     |     0.5 |    0.25 |         1024 |
+| s     |     0.5 |    0.50 |         1024 |
+| **m** | **0.5** | **1.0** |      **512** |
+| **l** | **1.0** | **1.0** |      **512** |
 
 **m va l co width y het nhau (1.0), chi khac depth.** Ma pruning kenh la thao
-tac tren *width*, khong dung den depth. Nen sau khi cat 50%, **124/124 lop dung
+tac tren _width_, khong dung den depth. Nen sau khi cat 50%, **124/124 lop dung
 chung deu ra dung cung so kenh** — khong lech mot lop nao:
 
-| lop | s | m | l |
-|---|---|---|---|
-| model.0.bn | 32 -> 16 | 64 -> 32 | 64 -> 32 |
-| model.4.cv2.bn | 256 -> 128 | 512 -> 256 | 512 -> 256 |
-| model.8.cv2.bn | 512 -> 256 | 512 -> 256 | 512 -> 256 |
+| lop             | s          | m          | l          |
+| --------------- | ---------- | ---------- | ---------- |
+| model.0.bn      | 32 -> 16   | 64 -> 32   | 64 -> 32   |
+| model.4.cv2.bn  | 256 -> 128 | 512 -> 256 | 512 -> 256 |
+| model.8.cv2.bn  | 512 -> 256 | 512 -> 256 | 512 -> 256 |
 | model.22.cv2.bn | 512 -> 256 | 512 -> 256 | 512 -> 256 |
 
 Khac biet giua Ours-M va Ours-L **hoan toan la do depth**: l co 178 lop BN can
@@ -302,11 +304,11 @@ prune so voi 124 cua m, tuc la moi khoi C3k2 lap 2 lan thay vi 1 (`n=2` so voi
 
 Do that (VOC, prune 50% div8):
 
-| size | params goc | pruned | GFLOPs goc | pruned | nen |
-|---|---:|---:|---:|---:|---:|
-| s | 9.96M | 4.04M | 22.6 | 8.4 | 2.46x |
-| m | 21.80M | 7.50M | 74.9 | 23.6 | 2.91x |
-| l | 26.21M | 9.70M | 93.3 | 31.9 | 2.70x |
+| size | params goc | pruned | GFLOPs goc | pruned |   nen |
+| ---- | ---------: | -----: | ---------: | -----: | ----: |
+| s    |      9.96M |  4.04M |       22.6 |    8.4 | 2.46x |
+| m    |     21.80M |  7.50M |       74.9 |   23.6 | 2.91x |
+| l    |     26.21M |  9.70M |       93.3 |   31.9 | 2.70x |
 
 `l` chi to hon `m` 20% ngay tu dau (26.2 so voi 21.8M) cung vi ly do nay — no
 sau hon chu khong rong hon.
