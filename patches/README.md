@@ -5,12 +5,12 @@
 > dung vi du cua chinh tac gia (`examples/yolov8/yolov8_pruning.py`). Giu lai
 > day chi vi hai loi ben duoi la loi that, co the gui nguoc len upstream.
 >
-> | cach lam | ket qua |
-> |---|---|
-> | ban goc, khong bo chunk | 76/90 |
-> | ban da va, khong bo chunk | 83/90 |
-> | **ban goc, co bo chunk** | **90/90** |
-> | ban da va, co bo chunk | 90/90 |
+> | cach lam                  | ket qua   |
+> | ------------------------- | --------- |
+> | ban goc, khong bo chunk   | 76/90     |
+> | ban da va, khong bo chunk | 83/90     |
+> | **ban goc, co bo chunk**  | **90/90** |
+> | ban da va, co bo chunk    | 90/90     |
 >
 > Tuc la bo chunk giai quyet triet de, con va tracer chi do duoc mot nua van de.
 
@@ -43,10 +43,10 @@ khong phai so manh. Mot manh nuoi nhieu noi la lech ngay.
 
 Do that tren yolo26m, so lop prunable tinh duoc diem nhom:
 
-| | lop |
-|---|---|
-| truoc khi va | 76/90 |
-| sau khi va | **83/90** |
+|              | lop       |
+| ------------ | --------- |
+| truoc khi va | 76/90     |
+| sau khi va   | **83/90** |
 
 Sau khi va, moi nut `chunk` bao dung kich thuoc that: `[64,64]`, `[128,128]`,
 `[256,256]` — doi chieu bang hook vao forward.

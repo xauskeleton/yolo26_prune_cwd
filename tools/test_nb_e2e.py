@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """Chay ca hai buoc tu dong (dataset + checkpoint) tren cay /kaggle/input gia,
 voi ten run kem hau to _1024 dung nhu notebook hien tai.
 """
+
 import pathlib
 import shutil
 import sys
@@ -39,22 +39,37 @@ torch.save({"epoch": 36, "train_args": {"epochs": 100}}, d / "last.pt")
 #   (d) model da prune, de khoi prune lai
 torch.save({"x": 1}, OUT / "yolo" / "weights_yolo26m_vd_pruned50_1024.pt")
 (OUT / "yolo" / "weights").mkdir(exist_ok=True)
-shutil.move(str(OUT / "yolo" / "weights_yolo26m_vd_pruned50_1024.pt"),
-            str(OUT / "yolo" / "weights" / "yolo26m_vd_pruned50_1024.pt"))
+shutil.move(
+    str(OUT / "yolo" / "weights_yolo26m_vd_pruned50_1024.pt"),
+    str(OUT / "yolo" / "weights" / "yolo26m_vd_pruned50_1024.pt"),
+)
 
 # ---- nap vd_common voi duong dan tro vao cay gia -----------------------------
 mod = types.ModuleType("vd_e2e")
-code = (SRC.replace('"/kaggle/input/', '"' + str(inp).replace("\\", "/") + "/")
-           .replace('pathlib.Path("/kaggle/temp/datasets")',
-                    'pathlib.Path("{}/datasets")'.format(str(tempd).replace("\\", "/")))
-           .replace('pathlib.Path("/kaggle/temp")', 'pathlib.Path("{}")'.format(str(tempd).replace("\\", "/")))
-           .replace('pathlib.Path("/kaggle")', 'pathlib.Path("{}")'.format(str(kag).replace("\\", "/"))))
+code = (
+    SRC.replace('"/kaggle/input/', '"' + str(inp).replace("\\", "/") + "/")
+    .replace(
+        'pathlib.Path("/kaggle/temp/datasets")', 'pathlib.Path("{}/datasets")'.format(str(tempd).replace("\\", "/"))
+    )
+    .replace('pathlib.Path("/kaggle/temp")', 'pathlib.Path("{}")'.format(str(tempd).replace("\\", "/")))
+    .replace('pathlib.Path("/kaggle")', 'pathlib.Path("{}")'.format(str(kag).replace("\\", "/")))
+)
 exec(compile(code, "vd_e2e", "exec"), mod.__dict__)
 
 BASE, OURS = "vd_yolo26m_1024", "vd_oursm_1024"
 PRUNED = repo / "weights" / "yolo26m_vd_pruned50_1024.pt"
-mod.init(REPO_DIR=repo, DATA="VisDrone.yaml", EPOCHS=100, BATCH=8, IMGSZ=1024,
-         DEVICE="0,1", COS_LR=False, PATIENCE=100, WARMUP=3.0, STOP_AFTER_H=10.0)
+mod.init(
+    REPO_DIR=repo,
+    DATA="VisDrone.yaml",
+    EPOCHS=100,
+    BATCH=8,
+    IMGSZ=1024,
+    DEVICE="0,1",
+    COS_LR=False,
+    PATIENCE=100,
+    WARMUP=3.0,
+    STOP_AFTER_H=10.0,
+)
 
 print("=" * 70)
 print("CELL 3 — Dataset")
@@ -69,14 +84,14 @@ mod.restore(BASE, OURS, PRUNED, {})
 
 print()
 print("=" * 70)
-print("Quyet dinh tung stage")
+print("Quyet dinh tongue stage")
 print("=" * 70)
 nb, no = mod.done_epochs(BASE), mod.done_epochs(OURS)
 best = repo / "runs" / BASE / "weights" / "best.pt"
 print("  baseline : {}/100  ->  {}".format(nb, "BO QUA" if 0 < 100 <= nb else "train"))
 print("  best.pt cho prune + teacher :", best.exists())
 print("  model da prune co san       :", PRUNED.exists(), "-> khong prune lai")
-print("  ours     : {}/100  ->  {}".format(no, "RESUME tu epoch {}".format(no)))
+print("  ours     : {}/100  ->  {}".format(no, f"RESUME tu epoch {no}"))
 
 checks = {
     "dataset nhan duoc": ds is not None and (ds / "images" / "val" / "a.jpg").exists(),
