@@ -1,8 +1,13 @@
 """Plot pruning methods benchmark - bar charts + training curves from CSV data."""
+
 import os
-import pandas as pd
+
 import matplotlib
+import pandas as pd
+
 matplotlib.use("Agg")
+import sys
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,24 +17,25 @@ SAVE_DIR = "prune_bm"
 # Experiment configs: folder_name -> (display_name, color)
 EXPERIMENTS = {
     "baseline": ("Baseline\n(unpruned)", "#607D8B"),
-    "l1_norm":  ("L1 Norm",             "#2196F3"),
-    "fpgm":     ("FPGM",                "#4CAF50"),
-    "taylor":   ("Taylor",              "#FF9800"),
-    "gamma+cwd":("BN Gamma\n+ CWD",     "#9C27B0"),
-    "gamma":    ("BN Gamma",            "#E91E63"),
-    "random":   ("Random",              "#F44336"),
+    "l1_norm": ("L1 Norm", "#2196F3"),
+    "fpgm": ("FPGM", "#4CAF50"),
+    "taylor": ("Taylor", "#FF9800"),
+    "gamma+cwd": ("BN Gamma\n+ CWD", "#9C27B0"),
+    "gamma": ("BN Gamma", "#E91E63"),
+    "random": ("Random", "#F44336"),
 }
 
 # For training curves (shorter names, no newlines)
 CURVE_NAMES = {
     "baseline": "Baseline",
-    "l1_norm":  "L1 Norm",
-    "fpgm":     "FPGM",
-    "taylor":   "Taylor",
-    "gamma+cwd":"BN Gamma+CWD",
-    "gamma":    "BN Gamma",
-    "random":   "Random",
+    "l1_norm": "L1 Norm",
+    "fpgm": "FPGM",
+    "taylor": "Taylor",
+    "gamma+cwd": "BN Gamma+CWD",
+    "gamma": "BN Gamma",
+    "random": "Random",
 }
+
 
 def load_data():
     """Load all results.csv files."""
@@ -62,8 +68,15 @@ def plot_bar_charts(data):
     # --- mAP50 ---
     bars1 = ax1.bar(methods, map50, color=colors, edgecolor="white", linewidth=0.5)
     for bar in bars1:
-        ax1.text(bar.get_x() + bar.get_width() / 2., bar.get_height() + 0.0003,
-                 f"{bar.get_height():.3f}", ha="center", va="bottom", fontweight="bold", fontsize=10)
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + 0.0003,
+            f"{bar.get_height():.3f}",
+            ha="center",
+            va="bottom",
+            fontweight="bold",
+            fontsize=10,
+        )
     ax1.set_title("mAP50", fontsize=14, fontweight="bold")
     ax1.set_ylim(min(map50) - 0.015, max(map50) + 0.010)
     ax1.set_ylabel("Score", fontsize=12)
@@ -75,8 +88,15 @@ def plot_bar_charts(data):
     # --- mAP50-95 ---
     bars2 = ax2.bar(methods, map50_95, color=colors, edgecolor="white", linewidth=0.5)
     for bar in bars2:
-        ax2.text(bar.get_x() + bar.get_width() / 2., bar.get_height() + 0.0003,
-                 f"{bar.get_height():.3f}", ha="center", va="bottom", fontweight="bold", fontsize=10)
+        ax2.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + 0.0003,
+            f"{bar.get_height():.3f}",
+            ha="center",
+            va="bottom",
+            fontweight="bold",
+            fontsize=10,
+        )
     ax2.set_title("mAP50-95", fontsize=14, fontweight="bold")
     ax2.set_ylim(min(map50_95) - 0.015, max(map50_95) + 0.010)
     ax2.set_ylabel("Score", fontsize=12)
@@ -105,10 +125,22 @@ def plot_training_curves(data):
         label = CURVE_NAMES[key]
         epochs = df["epoch"].values
 
-        ax1.plot(epochs, df["metrics/mAP50(B)"].values, color=color, linewidth=1.5,
-                 label=f"{label} (best={df['metrics/mAP50(B)'].max():.3f})", alpha=0.85)
-        ax2.plot(epochs, df["metrics/mAP50-95(B)"].values, color=color, linewidth=1.5,
-                 label=f"{label} (best={df['metrics/mAP50-95(B)'].max():.3f})", alpha=0.85)
+        ax1.plot(
+            epochs,
+            df["metrics/mAP50(B)"].values,
+            color=color,
+            linewidth=1.5,
+            label=f"{label} (best={df['metrics/mAP50(B)'].max():.3f})",
+            alpha=0.85,
+        )
+        ax2.plot(
+            epochs,
+            df["metrics/mAP50-95(B)"].values,
+            color=color,
+            linewidth=1.5,
+            label=f"{label} (best={df['metrics/mAP50-95(B)'].max():.3f})",
+            alpha=0.85,
+        )
 
     for ax, title in [(ax1, "mAP50"), (ax2, "mAP50-95")]:
         ax.set_title(title, fontsize=14, fontweight="bold")
@@ -184,17 +216,25 @@ def plot_delta_chart(data):
     x = np.arange(len(methods))
     width = 0.35
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bars1 = ax.bar(x - width / 2, delta50, width, label="mAP50 drop (%)", color=[c + "AA" for c in colors],
-                   edgecolor="white")
-    bars2 = ax.bar(x + width / 2, delta50_95, width, label="mAP50-95 drop (%)", color=colors,
-                   edgecolor="white")
+    _fig, ax = plt.subplots(figsize=(12, 6))
+    bars1 = ax.bar(
+        x - width / 2, delta50, width, label="mAP50 drop (%)", color=[c + "AA" for c in colors], edgecolor="white"
+    )
+    bars2 = ax.bar(x + width / 2, delta50_95, width, label="mAP50-95 drop (%)", color=colors, edgecolor="white")
 
     for bars in [bars1, bars2]:
         for bar in bars:
             val = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width() / 2., val - 0.05,
-                    f"{val:.2f}%", ha="center", va="top", fontweight="bold", fontsize=9, color="white")
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                val - 0.05,
+                f"{val:.2f}%",
+                ha="center",
+                va="top",
+                fontweight="bold",
+                fontsize=9,
+                color="white",
+            )
 
     ax.set_ylabel("mAP Drop from Baseline (%)", fontsize=12)
     ax.set_title("mAP Drop After Pruning (vs Baseline)", fontsize=14, fontweight="bold")
@@ -244,7 +284,7 @@ if __name__ == "__main__":
     data = load_data()
     if not data:
         print("No data found!")
-        exit(1)
+        sys.exit(1)
 
     plot_bar_charts(data)
     plot_training_curves(data)
