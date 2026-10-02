@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 """Bieu do Pareto AP@0.5 - GFLOPs: duong quet ti le pruning tren nen cac doi chung.
 
 Huong tot la TREN-TRAI (AP cao, FLOPs thap). Cung bang mau / rcParams voi dcmm.py.
 """
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -51,11 +51,9 @@ plt.rcParams["grid.alpha"] = 0.4
 fig, ax = plt.subplots(figsize=(10, 6))
 
 # Doi chung ve truoc de nam duoi duong cua ta.
-ax.scatter([r[1] for r in RIVALS], [r[2] for r in RIVALS],
-           s=70, color=GREY, zorder=3)
+ax.scatter([r[1] for r in RIVALS], [r[2] for r in RIVALS], s=70, color=GREY, zorder=3)
 for name, gf, ap, off, ha in RIVALS:
-    ax.annotate(name, (gf, ap), textcoords="offset points", xytext=off,
-                ha=ha, fontsize=10, color="#6B7480")
+    ax.annotate(name, (gf, ap), textcoords="offset points", xytext=off, ha=ha, fontsize=10, color="#6B7480")
 
 x = [d[1] for d in OURS]
 y = [d[2] for d in OURS]
@@ -63,13 +61,18 @@ ax.plot(x, y, color=BLUE, linewidth=3.0, zorder=4)
 # Marker rong, rieng 50% to dac: do la cau hinh de xuat.
 for ratio, gf, ap in OURS:
     face = BLUE if ratio == 50 else "white"
-    ax.plot([gf], [ap], marker="o", markersize=9, color=BLUE,
-            markerfacecolor=face, markeredgewidth=2.5, zorder=5)
+    ax.plot([gf], [ap], marker="o", markersize=9, color=BLUE, markerfacecolor=face, markeredgewidth=2.5, zorder=5)
     text, off, ha = OURS_LABEL[ratio]
-    ax.annotate(text, (gf, ap), textcoords="offset points", xytext=off,
-                ha=ha, fontsize=11,
-                color="#1F1F1F" if ratio == 50 else "#444444",
-                fontweight="bold" if ratio == 50 else "normal")
+    ax.annotate(
+        text,
+        (gf, ap),
+        textcoords="offset points",
+        xytext=off,
+        ha=ha,
+        fontsize=11,
+        color="#1F1F1F" if ratio == 50 else "#444444",
+        fontweight="bold" if ratio == 50 else "normal",
+    )
 
 ax.set_xlabel("GFLOPs")
 ax.set_ylabel("AP@0.5")

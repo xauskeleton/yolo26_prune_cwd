@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
 """Kiem chung: cong thuc diem nhom tu viet co khop voi torch-pruning khong.
 
 Neu khop tren 76 lop ma torch-pruning xu ly dung, thi dung no cho ca 90 lop
 la chinh dang — ke ca 14 lop ma tracer cua torch-pruning tra ve nhom sai.
 """
+
 import contextlib
 import io
 import sys
@@ -12,14 +12,13 @@ sys.path.insert(0, ".")
 sys.path.insert(0, "pruning")
 
 import torch
-import torch.nn as nn
 import torch_pruning as tp
 from prune_common import load_and_prepare
+
 from dms.dms_utils import build_conv_bn_mapping
 
 with contextlib.redirect_stdout(io.StringIO()):
-    model, bn_dict, ign, _c, _l, _y = load_and_prepare(
-        "weights/yolo26m_baseline.pt", "cfg/yolo26m.yaml", "m", None)
+    model, bn_dict, ign, _c, _l, _y = load_and_prepare("weights/yolo26m_baseline.pt", "cfg/yolo26m.yaml", "m", None)
 net = model.model
 conv_bn_map, bn_channels = build_conv_bn_mapping(net, ign)
 
@@ -28,7 +27,7 @@ consumers = {}
 for cname, info in conv_bn_map.items():
     ib = info.get("in_bn")
     # in_bn co the la mot ten, hoac mot danh sach (dau vao Concat)
-    for b in (ib if isinstance(ib, (list, tuple)) else [ib]):
+    for b in ib if isinstance(ib, (list, tuple)) else [ib]:
         if isinstance(b, str) and b:
             consumers.setdefault(b, []).append(cname)
 
@@ -56,7 +55,7 @@ def my_score(bn_name):
         c = mods.get(cn)
         if c is None or c.groups != 1:
             continue
-        w = c.weight.data.transpose(0, 1).flatten(1)   # theo kenh VAO
+        w = c.weight.data.transpose(0, 1).flatten(1)  # theo kenh VAO
         if w.shape[0] != parts[0].numel():
             continue
         parts.append(norm_mean(w.abs().pow(P).sum(1)))
@@ -76,8 +75,7 @@ for bn_name in bn_dict:
     if conv is None:
         continue
     try:
-        ref = imp_fn(DG.get_pruning_group(
-            conv, tp.prune_conv_out_channels, idxs=list(range(conv.out_channels))))
+        ref = imp_fn(DG.get_pruning_group(conv, tp.prune_conv_out_channels, idxs=list(range(conv.out_channels))))
     except Exception:
         rows.append((bn_name, None, None, None))
         continue
@@ -96,21 +94,21 @@ for bn_name in bn_dict:
 
 good = [r for r in rows if r[1] is not None]
 bad = [r for r in rows if r[1] is None]
-print("Lop torch-pruning xu ly duoc: {}  |  khong duoc: {}".format(len(good), len(bad)))
+print(f"Lop torch-pruning xu ly duoc: {len(good)}  |  khong duoc: {len(bad)}")
 print()
 print("{:<32} {:>8} {:>10} {:>7}".format("layer", "rho", "trung@50%", "n_lop"))
 print("-" * 62)
 for n, rho, ov, np_ in good[:12]:
-    print("{:<32} {:>8.4f} {:>9.1%} {:>7}".format(n, rho, ov, np_))
+    print(f"{n:<32} {rho:>8.4f} {ov:>9.1%} {np_:>7}")
 if good:
     rhos = [r[1] for r in good]
     ovs = [r[2] for r in good]
     print("-" * 62)
-    print("{:<32} {:>8.4f} {:>9.1%}".format(
-        "TRUNG BINH ({} lop)".format(len(good)),
-        sum(rhos) / len(rhos), sum(ovs) / len(ovs)))
+    print(
+        "{:<32} {:>8.4f} {:>9.1%}".format(f"TRUNG BINH ({len(good)} lop)", sum(rhos) / len(rhos), sum(ovs) / len(ovs))
+    )
     print("rho thap nhat:", round(min(rhos), 4))
 print()
 print("14 lop torch-pruning bo cuoc, cong thuc tu viet van tinh duoc:")
 for n, _, _, np_ in bad[:14]:
-    print("   {:<32} {} lop trong nhom".format(n, np_))
+    print(f"   {n:<32} {np_} lop trong nhom")

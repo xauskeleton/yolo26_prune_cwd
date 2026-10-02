@@ -1,5 +1,6 @@
 from ultralytics import YOLO
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     model = YOLO("weights/yolo26m_pruned_div8.pt")
     model.train(
         data="VOC.yaml",

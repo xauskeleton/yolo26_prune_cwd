@@ -1,14 +1,14 @@
-# Chia ratio cho tung nguoi
+# Chia ratio cho tongue nguoi
 
 Moi nguoi mot notebook, chay doc lap tren Kaggle 2xT4. Khong ai phai doi ai.
 
-| Ratio | Notebook | Nguoi chay |
-|---|---|---|
-| 30% | `nb_r30.ipynb` | |
-| 40% | `nb_r40.ipynb` | |
-| 50% | `nb_r50.ipynb` | |
-| 60% | `nb_r60.ipynb` | |
-| 70% | `nb_r70.ipynb` | |
+| Ratio | Notebook       | Nguoi chay |
+| ----- | -------------- | ---------- |
+| 30%   | `nb_r30.ipynb` |            |
+| 40%   | `nb_r40.ipynb` |            |
+| 50%   | `nb_r50.ipynb` |            |
+| 60%   | `nb_r60.ipynb` |            |
+| 70%   | `nb_r70.ipynb` |            |
 
 ## Truoc khi chia
 
