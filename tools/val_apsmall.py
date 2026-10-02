@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Do AP theo kich thuoc vat the (AP_small / medium / large) cho cac checkpoint.
 
 Ultralytics khong in AP_small mac dinh - no chi cho AP50, AP50-95 va per-class.
@@ -12,6 +11,7 @@ VisDrone (bai doi chung arXiv 2509.12918 co cot nay).
 
 Khong train gi, chi val lai. Can pycocotools va dataset da tai ve.
 """
+
 import argparse
 import json
 import sys
@@ -25,18 +25,17 @@ def build_coco_gt(val_images, names, out_json):
     """Dung file GT dang COCO tu nhan YOLO.
 
     Phai khop dung quy uoc cua Ultralytics khi ghi predictions:
-      - image_id  = stem cua anh (chuoi) -> o day doi sang so nguyen, va
+    - image_id  = stem cua anh (chuoi) -> o day doi sang so nguyen, va
                     predictions cung duoc doi theo cung bang anh xa
-      - category_id = chi so lop + 1  (val.py:91 dung list(range(1, nc+1)))
-      - bbox      = [x_goc_trai, y_tren, w, h] tinh bang pixel anh goc
+    - category_id = chi so lop + 1  (val.py:91 dung list(range(1, nc+1)))
+    - bbox      = [x_goc_trai, y_tren, w, h] tinh bang pixel anh goc
     """
     from PIL import Image
 
     val_images = Path(val_images)
-    imgs = sorted([p for p in val_images.rglob("*")
-                   if p.suffix.lower() in (".jpg", ".jpeg", ".png")])
+    imgs = sorted([p for p in val_images.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")])
     if not imgs:
-        raise SystemExit("Khong thay anh nao trong {}".format(val_images))
+        raise SystemExit(f"Khong thay anh nao trong {val_images}")
 
     stem2id, images, anns = {}, [], []
     ann_id = 1
@@ -56,16 +55,26 @@ def build_coco_gt(val_images, names, out_json):
             x = (cx - bw / 2) * w
             y = (cy - bh / 2) * h
             bw, bh = bw * w, bh * h
-            anns.append({"id": ann_id, "image_id": i, "category_id": c + 1,
-                         "bbox": [x, y, bw, bh], "area": bw * bh, "iscrowd": 0})
+            anns.append(
+                {
+                    "id": ann_id,
+                    "image_id": i,
+                    "category_id": c + 1,
+                    "bbox": [x, y, bw, bh],
+                    "area": bw * bh,
+                    "iscrowd": 0,
+                }
+            )
             ann_id += 1
 
-    gt = {"images": images,
-          "annotations": anns,
-          "categories": [{"id": k + 1, "name": v} for k, v in sorted(names.items())]}
+    gt = {
+        "images": images,
+        "annotations": anns,
+        "categories": [{"id": k + 1, "name": v} for k, v in sorted(names.items())],
+    }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(gt))
-    print("GT: {} anh, {} vat the -> {}".format(len(images), len(anns), out_json))
+    print(f"GT: {len(images)} anh, {len(anns)} vat the -> {out_json}")
     return stem2id
 
 
@@ -109,8 +118,7 @@ def main():
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="0")
-    ap.add_argument("--max-det", type=int, default=300,
-                    help="phai bang max_det cua Ultralytics (mac dinh 300)")
+    ap.add_argument("--max-det", type=int, default=300, help="phai bang max_det cua Ultralytics (mac dinh 300)")
     a = ap.parse_args()
 
     if a.weights:
@@ -135,8 +143,9 @@ def main():
         print(c.relative_to(ROOT) if ROOT in c.parents else c)
         print("=" * 70)
         m = YOLO(str(c))
-        r = m.val(data=a.data, imgsz=a.imgsz, batch=a.batch, device=a.device,
-                  max_det=a.max_det, save_json=True, verbose=False)
+        r = m.val(
+            data=a.data, imgsz=a.imgsz, batch=a.batch, device=a.device, max_det=a.max_det, save_json=True, verbose=False
+        )
         pred = Path(r.save_dir) / "predictions.json"
         if not pred.exists():
             print("  !! khong sinh duoc predictions.json, bo qua")
@@ -146,16 +155,15 @@ def main():
         rows.append((c.stem, round(par, 2), *stats))
 
     print("\n" + "=" * 92)
-    print("{:<30} {:>8} {:>7} {:>7} {:>7} {:>7} {:>7}".format(
-        "model", "par M", "AP50", "AP75", "APs", "APm", "APl"))
+    print("{:<30} {:>8} {:>7} {:>7} {:>7} {:>7} {:>7}".format("model", "par M", "AP50", "AP75", "APs", "APm", "APl"))
     print("-" * 84)
     for r in rows:
         print("{:<30} {:>8.2f} {:>7} {:>7} {:>7} {:>7} {:>7}".format(*r))
 
     out = ROOT / "results" / "visdrone" / "logs" / "ap_by_size.json"
-    out.write_text(json.dumps(
-        [dict(zip(("model", "params_M", "AP50", "AP75", "APs", "APm", "APl"), r))
-         for r in rows], indent=2))
+    out.write_text(
+        json.dumps([dict(zip(("model", "params_M", "AP50", "AP75", "APs", "APm", "APl"), r)) for r in rows], indent=2)
+    )
     print("\n->", out)
 
 

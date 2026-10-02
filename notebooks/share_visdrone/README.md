@@ -6,12 +6,12 @@ pipeline khong chi hop voi PASCAL VOC.
 Moi notebook lam **tron mot size**: baseline -> prune 50% -> finetune + CWD -> val,
 cho ra **hai dong** cua bang.
 
-| Notebook | Size | Uoc tinh | Phien |
-|---|---|---|---|
-| `nb_n.ipynb` | yolo26n | ~2-3h | 1 |
-| `nb_s.ipynb` | yolo26s | ~6h | 1 |
-| `nb_m.ipynb` | yolo26m | ~15h | 2 |
-| `nb_l.ipynb` | yolo26l | ~21h | 2-3 |
+| Notebook     | Size    | Uoc tinh | Phien |
+| ------------ | ------- | -------- | ----- |
+| `nb_n.ipynb` | yolo26n | ~2-3h    | 1     |
+| `nb_s.ipynb` | yolo26s | ~6h      | 1     |
+| `nb_m.ipynb` | yolo26m | ~15h     | 2     |
+| `nb_l.ipynb` | yolo26l | ~21h     | 2-3   |
 
 Bon notebook **doc lap hoan toan**, chay song song duoc ngay. Trong moi notebook
 thi Ours phai doi baseline cua chinh size do xong truoc — notebook tu lo, het gio
@@ -19,31 +19,31 @@ giua chung thi cac cell sau tu bo qua va in ra con thieu gi.
 
 ## Bang can dien
 
-| Model | Params (M) | AP50 | AP50-95 |
-|---|---:|---:|---:|
-| YOLO26-N | | | |
-| Ours-N | | | |
-| YOLO26-S | | | |
-| Ours-S | | | |
-| YOLO26-M | | | |
-| Ours-M | | | |
-| YOLO26-L | | | |
-| Ours-L | | | |
+| Model    | Params (M) | AP50 | AP50-95 |
+| -------- | ---------: | ---: | ------: |
+| YOLO26-N |            |      |         |
+| Ours-N   |            |      |         |
+| YOLO26-S |            |      |         |
+| Ours-S   |            |      |         |
+| YOLO26-M |            |      |         |
+| Ours-M   |            |      |         |
+| YOLO26-L |            |      |         |
+| Ours-L   |            |      |         |
 
 Dung dinh dang cua `dcmm.py` nhung tren VisDrone thay vi VOC.
 
 ## Cau hinh chung — DUNG DOI
 
-| | |
-|---|---|
-| Dataset | VisDrone2019-DET, 6471 train / 548 val, 10 lop, 2.3 GB tu dong tai |
-| Epoch / batch / imgsz / seed | 100 / 16 / 640 / 0 |
-| Prune | L1-norm uniform **50%**, divisor 8 |
-| CWD | tau=9, kd_lambda=0.5, kd_layers=neck, kd_warmup=5 |
-| Teacher | baseline cua **chinh size do** |
-| Phan cung | Kaggle GPU T4 x2 (DDP) |
+|                              |                                                                    |
+| ---------------------------- | ------------------------------------------------------------------ |
+| Dataset                      | VisDrone2019-DET, 6471 train / 548 val, 10 lop, 2.3 GB tu dong tai |
+| Epoch / batch / imgsz / seed | 100 / 16 / 640 / 0                                                 |
+| Prune                        | L1-norm uniform **50%**, divisor 8                                 |
+| CWD                          | tau=9, kd_lambda=0.5, kd_layers=neck, kd_warmup=5                  |
+| Teacher                      | baseline cua **chinh size do**                                     |
+| Phan cung                    | Kaggle GPU T4 x2 (DDP)                                             |
 
-Doi mot tham so thoi la dong cua ban khong con so sanh duoc voi ba dong kia.
+Doi mot than so thoi la dong cua ban khong con so sanh duoc voi ba dong kia.
 Neu buoc phai doi (vi du het VRAM) thi **bao lai**, dung tu sua rooi im lang.
 
 `imgsz=640` la muc chuan cua cac bai nen model tren VisDrone (FDM-YOLO,
@@ -56,11 +56,11 @@ Bon notebook hien tai dat `IMGSZ = 1024` de chay them mot bo doi dau truc tiep
 voi arXiv 2509.12918 — ho bao cao o 1024, va **cung dung batch 8**, nen cau
 hinh khop han.
 
-| imgsz | batch | VRAM (do that / uoc tinh) | T4 15 GB |
-|---|---:|---:|---|
-| 640 | 16 | 7.3 GB *(do that)* | on |
-| **1024** | **8** | ~9.4 GB | **on** |
-| 1280 | 4 | ~7.3 GB | on, nhung batch 4 lam BN vo nghia |
+| imgsz    | batch | VRAM (do that / uoc tinh) | T4 15 GB                          |
+| -------- | ----: | ------------------------: | --------------------------------- |
+| 640      |    16 |        7.3 GB _(do that)_ | on                                |
+| **1024** | **8** |                   ~9.4 GB | **on**                            |
+| 1280     |     4 |                   ~7.3 GB | on, nhung batch 4 lam BN vo nghia |
 
 Batch phai ha vi activation tang theo **binh phuong** do phan giai. Teacher
 forward chay FP32 ngoai autocast nen ton them nua.
@@ -72,13 +72,13 @@ nen khong de len ket qua 640, va file gui ve cung kem hau to.
 
 `STOP_AFTER_H = 10.0`, dem tu luc **bat dau train** chu khong ke setup:
 
-| | |
-|---|---|
-| setup | ~3 phut |
-| train | 10h |
-| tran mot epoch dang do | ~10 phut *(o 1024 moi epoch ~10 phut)* |
-| val cuoi | ~5 phut |
-| **tong** | **~10.3h** |
+|                        |                                        |
+| ---------------------- | -------------------------------------- |
+| setup                  | ~3 phut                                |
+| train                  | 10h                                    |
+| tran mot epoch dang do | ~10 phut _(o 1024 moi epoch ~10 phut)_ |
+| val cuoi               | ~5 phut                                |
+| **tong**               | **~10.3h**                             |
 
 Con gan 2 tieng du truoc moc 12h cua Kaggle.
 
@@ -107,11 +107,11 @@ python tools/test_nb_dataset.py
 Lay tu thoi gian do that o 640 nhan 2.56 (ti le binh phuong do phan giai):
 
 | Size | 640 (da xong) | 1024 (uoc tinh) | So phien |
-|---|---:|---:|---:|
-| n | 8.7h | ~22h | 3 |
-| s | 9.5h | ~24h | 3 |
-| m | 12.2h | ~33h | 4 |
-| l | 16.8h | ~43h | 5 |
+| ---- | ------------: | --------------: | -------: |
+| n    |          8.7h |            ~22h |        3 |
+| s    |          9.5h |            ~24h |        3 |
+| m    |         12.2h |            ~33h |        4 |
+| l    |         16.8h |            ~43h |        5 |
 
 Tong 15 phien. Quota 30h/tuan moi tai khoan, nen ca bon size o 1024 la khoang
 **4 tuan cua mot nguoi**, hoac mot tuan neu bon nguoi chay song song.
@@ -126,18 +126,18 @@ Tong 15 phien. Quota 30h/tuan moi tai khoan, nen ca bon size o 1024 la khoang
 thi **dung tu ha batch**, bao lai — batch khac nhau thi BatchNorm chuan hoa
 tren so mau khac nhau, hai dong 1024 het so sanh duoc voi nhau.
 
-## Sieu tham so
+## Sieu than so
 
 Da doc `train_args` tu chinh cac checkpoint VOC. **Cac run VOC theo size KHONG
 dong nhat**:
 
-| | yolo26s | yolo26l | yolo26m |
-|---|---:|---:|---:|
-| batch | 32 | 32 | **16** |
-| cos_lr | True | True | **False** |
-| patience | 20 | 30 | **100** |
-| warmup_epochs | 3.0 | **5.0** | 3.0 |
-| device | 0,1 (DDP) | 0,1 (DDP) | **0** |
+|               |   yolo26s |   yolo26l |   yolo26m |
+| ------------- | --------: | --------: | --------: |
+| batch         |        32 |        32 |    **16** |
+| cos_lr        |      True |      True | **False** |
+| patience      |        20 |        30 |   **100** |
+| warmup_epochs |       3.0 |   **5.0** |       3.0 |
+| device        | 0,1 (DDP) | 0,1 (DDP) |     **0** |
 
 (`lr0` cung khac nhau — 0.001 / 0.0002 / 0.01 — nhung `optimizer=auto` bo qua
 `lr0` va tu chon lay, nen cho nay khong tinh la khac biet that.)
@@ -162,14 +162,14 @@ optimizer = "auto"  # -> MuSGD, tu chon lr
 DEVICE = "0,1"      # DDP cho ca 4 size
 ```
 
-Ba tham so `cos_lr` / `patience` / `warmup_epochs` duoc **ghi thang trong
+Ba than so `cos_lr` / `patience` / `warmup_epochs` duoc **ghi thang trong
 notebook** chu khong de mac dinh — de nhin la thay, va de Ultralytics co doi
 mac dinh thi bang van khong troi.
 
 Vi sao chon nhu vay:
 
 - **`patience=100`** tat early stop, nen ca 4 size deu la run 100 epoch that.
-  Voi patience 20-30 thi co size dung som, co size chay het — bang theo size ma
+  Voi patience 20-30 thi co size dung some, co size chay het — bang theo size ma
   moi dong mot do dai thi khong so sanh duoc.
 - **`batch=16` chu khong 32.** VisDrone chi co 6471 anh: batch 16 cho 405
   iter/epoch, batch 32 chi con 202 — qua it. Batch 16 con an toan VRAM cho
@@ -180,16 +180,16 @@ Vi sao chon nhu vay:
 
 Phan augmentation giu nguyen mac dinh, khong tinh chinh rieng cho VisDrone:
 bang nay la de tra loi "pipeline co chuyen sang dataset khac duoc khong", ma do
-lai sieu tham so cho tung dataset thi cau tra loi mat gia tri.
+lai sieu than so cho tongue dataset thi cau tra loi mat gia tri.
 
 ### Hai thu da can nhac va bo
 
 **1. Tang `epochs`.** VisDrone 6471 anh so voi 16551 cua VOC:
 
-| | anh | iter/epoch (batch 16) | 100 epoch |
-|---|---:|---:|---:|
-| VOC | 16551 | 1035 | 103500 |
-| VisDrone | 6471 | 405 | 40500 |
+|          |   anh | iter/epoch (batch 16) | 100 epoch |
+| -------- | ----: | --------------------: | --------: |
+| VOC      | 16551 |                  1035 |    103500 |
+| VisDrone |  6471 |                   405 |     40500 |
 
 Chi bang **39%** so buoc toi uu; muon bang phai chay ~256 epoch. Van giu 100 vi
 cac bai nen model tren VisDrone deu dung 100, vi baseline va Ours nhan cung mot
@@ -232,7 +232,7 @@ binh thuong. Cell resume tim `runs/<NAME>/weights/last.pt` va file da prune
 trong `/kaggle/input`, chep ve, roi `model.train(resume=True)`.
 
 Nguyen tac trong ham `train()`: **co last.pt la resume**. Khong lay so epoch
-doc duoc lam dieu kien — doc that bai thi se am tham train lai tu dau, mat ca
+doc duoc lam dieu kien — doc that bai thi se am than train lai tu dau, mat ca
 chuc gio ma khong bao gi.
 
 ## Luu y rieng cho size l
@@ -247,11 +247,11 @@ batch khac nhau thi BatchNorm chuan hoa tren so mau khac nhau, bang het so sanh.
 Trong luc chay, tren Kaggle (`project=runs/`, tat ca nam duoi `/kaggle/working`
 nen deu vao tab Output):
 
-| | |
-|---|---|
-| Baseline | `/kaggle/working/yolo/runs/vd_yolo26<size>/weights/{best,last}.pt` |
-| Ours | `/kaggle/working/yolo/runs/vd_ours<size>/weights/{best,last}.pt` |
-| Model da prune | `/kaggle/working/yolo/weights/yolo26<size>_vd_pruned50.pt` |
+|                |                                                                    |
+| -------------- | ------------------------------------------------------------------ |
+| Baseline       | `/kaggle/working/yolo/runs/vd_yolo26<size>/weights/{best,last}.pt` |
+| Ours           | `/kaggle/working/yolo/runs/vd_ours<size>/weights/{best,last}.pt`   |
+| Model da prune | `/kaggle/working/yolo/weights/yolo26<size>_vd_pruned50.pt`         |
 
 `last.pt` ghi lai moi epoch (de resume), `best.pt` la ban tot nhat.
 
@@ -272,7 +272,7 @@ khong de len nhau.
 ## Logic nam trong `vd_common.py`, khong nam trong cell notebook
 
 Cell cua notebook duoc luu trong file `.ipynb` **tren Kaggle**, nen `git clone`
-khong va duoc: sua mot loi la phai bat ca 4 nguoi import lai notebook. Da tung
+khong va duoc: sua mot loi la phai bat ca 4 nguoi import lai notebook. Da tongue
 hong vi chuyen nay — goi resume lam cho ban notebook moi, nguoi chay lai dung
 ban cu, ket qua la baseline khong duoc nhan ra va train lai tu dau 6 tieng.
 
@@ -298,7 +298,7 @@ python tools/test_nb_resume.py
 ## Dong goi checkpoint de chuyen phien
 
 ```bash
-python tools/make_resume_zip.py m l        # mac dinh la m va l
+python tools/make_resume_zip.py m l # mac dinh la m va l
 ```
 
 Sinh `results/visdrone/upload/vd_resume_<size>.zip` voi cau truc:
@@ -311,7 +311,7 @@ vd_ours<size>/weights/last.pt       Ours dang train do
 Upload thanh Kaggle dataset roi **Add Data** — khong phai dien `MANUAL_LAST`,
 cell resume tu tim thay vi ten thu muc dung bang `BASE_NAME` / `OURS_NAME`.
 
-Script tu mo lai zip, doc `train_args.name` trong tung file va bao neu lech —
+Script tu mo lai zip, doc `train_args.name` trong tongue file va bao neu lech —
 tranh dung lai loi xep nham checkpoint cua size khac.
 
 Baseline chi can `best.pt`: `epochs_of()` thay `epoch = -1` (da strip optimizer

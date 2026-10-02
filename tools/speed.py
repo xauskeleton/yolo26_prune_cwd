@@ -16,11 +16,13 @@ Usage:
 
 import argparse
 import time
+from copy import deepcopy
+
 import numpy as np
 import torch
-from ultralytics import YOLO
 from thop import profile
-from copy import deepcopy
+
+from ultralytics import YOLO
 
 
 def iterative_sigma_clipping(data, sigma=2, max_iters=3):
@@ -43,11 +45,11 @@ def time_forward(model_nn, dummy, device, warmup=50, repetitions=200):
     with torch.no_grad():
         for _ in range(warmup):
             model_nn(dummy)
-        if device == 'cuda':
+        if device == "cuda":
             torch.cuda.synchronize()
 
     # Benchmark
-    if device == 'cuda':
+    if device == "cuda":
         timings = []
         with torch.no_grad():
             for _ in range(repetitions):
@@ -90,7 +92,7 @@ def get_flops_params(model_nn, img_size, device):
     m = deepcopy(model_nn)
     # thop uses torch.jit.trace which can't handle (tensor, dict) output
     # Set export=True so Detect head returns a single tensor
-    if hasattr(m, 'model') and hasattr(m.model[-1], 'export'):
+    if hasattr(m, "model") and hasattr(m.model[-1], "export"):
         m.model[-1].export = True
     flops, params = profile(m, inputs=(dummy,), verbose=False)
     return flops / 1e9, params / 1e6
@@ -108,18 +110,18 @@ if __name__ == "__main__":
     parser.add_argument("--threads", type=int, default=1, help="CPU threads (default: 1 for reproducibility)")
     args = parser.parse_args()
 
-    if args.device == 'cuda' and not torch.cuda.is_available():
+    if args.device == "cuda" and not torch.cuda.is_available():
         print("CUDA khong kha dung, chuyen sang CPU")
-        args.device = 'cpu'
+        args.device = "cpu"
 
     if args.batch is None:
-        args.batch = [1, 2, 4] if args.device == 'cpu' else [1, 2, 4]
+        args.batch = [1, 2, 4] if args.device == "cpu" else [1, 2, 4]
 
-    warmup = args.warmup or (100 if args.device == 'cuda' else 10)
-    reps = args.reps or (50 if args.device == 'cuda' else 30)
+    warmup = args.warmup or (100 if args.device == "cuda" else 10)
+    reps = args.reps or (50 if args.device == "cuda" else 30)
 
     # === Setup device ===
-    if args.device == 'cuda':
+    if args.device == "cuda":
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -134,8 +136,8 @@ if __name__ == "__main__":
     print(f"Device: {args.device.upper()}")
     print(f"Image size: {args.imgsz}")
     print(f"Warmup: {warmup} | Repetitions: {reps}")
-    print(f"Timing: raw model.forward() | Outlier: iterative sigma clipping (2σ)")
-    print(f"Metric: median (robust to outliers)")
+    print("Timing: raw model.forward() | Outlier: iterative sigma clipping (2σ)")
+    print("Metric: median (robust to outliers)")
 
     # Load models
     print(f"\nLoading Original: {args.orig}")
@@ -148,9 +150,9 @@ if __name__ == "__main__":
     g_prun, p_prun = get_flops_params(m_prun.model, args.imgsz, args.device)
 
     # === BENCHMARK ALL BATCH SIZES ===
-    print(f"\n{'='*90}")
+    print(f"\n{'=' * 90}")
     print(f"BENCHMARK ({args.device.upper()}) - raw forward, {reps} reps, sigma clipped")
-    print(f"{'='*90}")
+    print(f"{'=' * 90}")
 
     res_orig = {}
     res_prun = {}
@@ -164,9 +166,9 @@ if __name__ == "__main__":
             fps_o = bs / (med_o / 1000)
             res_orig[bs] = (med_o, avg_o, std_o, fps_o)
             print(f"  Orig  bs={bs:<3d} | median {med_o:.1f}ms  mean {avg_o:.1f}±{std_o:.1f}ms | {fps_o:.1f} FPS")
-        except (torch.cuda.OutOfMemoryError if args.device == 'cuda' else MemoryError):
+        except torch.cuda.OutOfMemoryError if args.device == "cuda" else MemoryError:
             res_orig[bs] = None
-            if args.device == 'cuda':
+            if args.device == "cuda":
                 torch.cuda.empty_cache()
             print(f"  Orig  bs={bs:<3d} | OOM")
 
@@ -176,21 +178,21 @@ if __name__ == "__main__":
             fps_p = bs / (med_p / 1000)
             res_prun[bs] = (med_p, avg_p, std_p, fps_p)
             print(f"  Prune bs={bs:<3d} | median {med_p:.1f}ms  mean {avg_p:.1f}±{std_p:.1f}ms | {fps_p:.1f} FPS")
-        except (torch.cuda.OutOfMemoryError if args.device == 'cuda' else MemoryError):
+        except torch.cuda.OutOfMemoryError if args.device == "cuda" else MemoryError:
             res_prun[bs] = None
-            if args.device == 'cuda':
+            if args.device == "cuda":
                 torch.cuda.empty_cache()
             print(f"  Prune bs={bs:<3d} | OOM")
 
         del dummy
-        if args.device == 'cuda':
+        if args.device == "cuda":
             torch.cuda.empty_cache()
         print()
 
     # === SUMMARY TABLE ===
-    print(f"{'='*65}")
+    print(f"{'=' * 65}")
     print(f"{'Metric':<15} | {'Original':<17} | {'Pruned':<17} | {'Giam (%)'}")
-    print(f"{'-'*65}")
+    print(f"{'-' * 65}")
     print(f"{'GFLOPs':<15} | {g_orig:>17.2f} | {g_prun:>17.2f} | {((g_orig - g_prun) / g_orig) * 100:>8.1f}%")
     print(f"{'Params (M)':<15} | {p_orig:>17.2f} | {p_prun:>17.2f} | {((p_orig - p_prun) / p_orig) * 100:>8.1f}%")
 
@@ -198,16 +200,22 @@ if __name__ == "__main__":
     o1 = res_orig.get(1)
     p1 = res_prun.get(1)
     if o1 and p1:
-        print(f"{'Latency (ms)':<15} | {o1[0]:>12.2f}±{o1[2]:<3.1f} | {p1[0]:>12.2f}±{p1[2]:<3.1f} | {((o1[0] - p1[0]) / o1[0]) * 100:>8.1f}%")
+        print(
+            f"{'Latency (ms)':<15} | {o1[0]:>12.2f}±{o1[2]:<3.1f} | {p1[0]:>12.2f}±{p1[2]:<3.1f} | {((o1[0] - p1[0]) / o1[0]) * 100:>8.1f}%"
+        )
         fps_orig = 1000 / o1[0]
         fps_prun = 1000 / p1[0]
-        print(f"{'FPS (bs=1)':<15} | {fps_orig:>17.1f} | {fps_prun:>17.1f} | {((fps_prun - fps_orig) / fps_orig) * 100:>8.1f}%")
-    print(f"{'='*65}")
+        print(
+            f"{'FPS (bs=1)':<15} | {fps_orig:>17.1f} | {fps_prun:>17.1f} | {((fps_prun - fps_orig) / fps_orig) * 100:>8.1f}%"
+        )
+    print(f"{'=' * 65}")
 
     # === BATCH SIZE COMPARISON TABLE ===
-    print(f"\n{'='*95}")
-    print(f"{'Batch':<6} | {'Orig median':<12} | {'Orig FPS':<10} | {'Prune median':<13} | {'Prune FPS':<10} | {'Speedup'}")
-    print(f"{'-'*95}")
+    print(f"\n{'=' * 95}")
+    print(
+        f"{'Batch':<6} | {'Orig median':<12} | {'Orig FPS':<10} | {'Prune median':<13} | {'Prune FPS':<10} | {'Speedup'}"
+    )
+    print(f"{'-' * 95}")
     for bs in args.batch:
         o = res_orig.get(bs)
         p = res_prun.get(bs)
@@ -220,4 +228,4 @@ if __name__ == "__main__":
         else:
             speedup = p[3] / o[3]
             print(f"{bs:<6} | {o[0]:>8.1f}ms   | {o[3]:<10.1f} | {p[0]:>8.1f}ms    | {p[3]:<10.1f} | {speedup:.2f}x")
-    print(f"{'='*95}")
+    print(f"{'=' * 95}")
