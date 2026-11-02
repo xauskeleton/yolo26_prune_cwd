@@ -2,7 +2,7 @@
 
 Moi ratio la mot lan chay run_e2e.py (prune -> finetune -> val) voi tag rieng
 (r30, r40, ...) nen khong ghi de len nhau. Sau do do params/GFLOPs/latency cho
-tung checkpoint cuoi, gom vao results/prune_sweep.csv va ve results/prune_sweep.png.
+tongue checkpoint cuoi, gom vao results/prune_sweep.csv va ve results/prune_sweep.png.
 
 Usage:
     # quet day du (moi ratio ~10h tren 1 GPU - nen chay qua nhieu phien voi --resume)
@@ -33,18 +33,20 @@ WARMUP, REPS = 50, 200
 
 
 def tag_of(r):
-    return f"r{int(round(r * 100))}"
+    return f"r{round(r * 100)}"
 
 
 def banner(t):
-    print(f"\n{'='*100}\n  {t}\n{'='*100}\n", flush=True)
+    print(f"\n{'=' * 100}\n  {t}\n{'=' * 100}\n", flush=True)
 
 
 # ───────────────────────────── do dac ─────────────────────────────
 
+
 def sigma_clip(data, sigma=2, max_iters=3):
     """Giong cach Ultralytics loc outlier khi do toc do."""
     import numpy as np
+
     data = np.array(data)
     for _ in range(max_iters):
         mean, std = np.mean(data), np.std(data)
@@ -58,10 +60,11 @@ def sigma_clip(data, sigma=2, max_iters=3):
 
 
 def measure(weights, imgsz, device, half=True):
-    """(params_M, gflops, latency_ms, fps). Tung phan co try rieng: do dac hong
-    khong duoc lam mat nhung so con lai."""
+    """(params_M, gflops, latency_ms, fps). Tongue phan co try rieng: do dac hong khong duoc lam mat nhung so con lai.
+    """
     import numpy as np
     import torch
+
     from ultralytics import YOLO
 
     nan = float("nan")
@@ -109,6 +112,7 @@ def measure(weights, imgsz, device, half=True):
     finally:
         try:
             import gc
+
             del m
             gc.collect()
             torch.cuda.empty_cache()
@@ -120,9 +124,11 @@ def measure(weights, imgsz, device, half=True):
 
 # ───────────────────────────── ve ─────────────────────────────
 
+
 def plot(rows):
-    """x = GFLOPs, truc trai = AP@0.5, truc phai = latency. Mau theo dcmm.py."""
+    """X = GFLOPs, truc trai = AP@0.5, truc phai = latency. Mau theo dcmm.py."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -144,8 +150,17 @@ def plot(rows):
     C_AP, C_LAT, C_TXT = "#378ADD", "#D85A30", "#4A5568"
 
     fig, ax1 = plt.subplots(figsize=(10, 5.4))
-    ax1.plot(g, ap, color=C_AP, marker="o", markersize=8, linewidth=2.6,
-             markerfacecolor="white", markeredgewidth=2.2, zorder=4)
+    ax1.plot(
+        g,
+        ap,
+        color=C_AP,
+        marker="o",
+        markersize=8,
+        linewidth=2.6,
+        markerfacecolor="white",
+        markeredgewidth=2.2,
+        zorder=4,
+    )
     ax1.set_xlabel("GFLOPs", fontsize=13)
     ax1.set_ylabel("AP@0.5 (%)", fontsize=13, color=C_AP)
     ax1.tick_params(axis="y", labelcolor=C_AP)
@@ -160,23 +175,65 @@ def plot(rows):
         # nhan o hai dau lech vao trong de khong tran ra ngoai khung
         dx = 12 if xi == min(g) else (-12 if xi == max(g) else 0)
         ha = "left" if dx > 0 else ("right" if dx < 0 else "center")
-        ax1.annotate(t, (xi, yi), textcoords="offset points", xytext=(dx, 11),
-                     ha=ha, fontsize=9.5, fontweight="bold", color=C_TXT)
+        ax1.annotate(
+            t,
+            (xi, yi),
+            textcoords="offset points",
+            xytext=(dx, 11),
+            ha=ha,
+            fontsize=9.5,
+            fontweight="bold",
+            color=C_TXT,
+        )
 
     if any(v == v for v in lat):
         ax2 = ax1.twinx()
-        ax2.plot(g, lat, color=C_LAT, marker="s", markersize=7, linewidth=2.4,
-                 markerfacecolor="white", markeredgewidth=2, linestyle="--", zorder=3)
+        ax2.plot(
+            g,
+            lat,
+            color=C_LAT,
+            marker="s",
+            markersize=7,
+            linewidth=2.4,
+            markerfacecolor="white",
+            markeredgewidth=2,
+            linestyle="--",
+            zorder=3,
+        )
         ax2.set_ylabel("Latency (ms)", fontsize=13, color=C_LAT)
         ax2.tick_params(axis="y", labelcolor=C_LAT)
         ax2.grid(False)
 
-    ax1.legend(handles=[
-        Line2D([0], [0], color=C_AP, marker="o", markersize=8, markerfacecolor="white",
-               markeredgewidth=2, label="AP@0.5"),
-        Line2D([0], [0], color=C_LAT, marker="s", markersize=7, markerfacecolor="white",
-               markeredgewidth=2, linestyle="--", label="Latency"),
-    ], loc="upper center", bbox_to_anchor=(0.5, 1.10), ncol=2, frameon=False, fontsize=11.5)
+    ax1.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                color=C_AP,
+                marker="o",
+                markersize=8,
+                markerfacecolor="white",
+                markeredgewidth=2,
+                label="AP@0.5",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color=C_LAT,
+                marker="s",
+                markersize=7,
+                markerfacecolor="white",
+                markeredgewidth=2,
+                linestyle="--",
+                label="Latency",
+            ),
+        ],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.10),
+        ncol=2,
+        frameon=False,
+        fontsize=11.5,
+    )
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
@@ -186,19 +243,19 @@ def plot(rows):
 
 # ───────────────────────────── main ─────────────────────────────
 
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Quet ti le pruning, ve duong accuracy - FLOPs - latency",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--ratios", nargs="+", type=float,
-                   default=[0.3, 0.4, 0.5, 0.6, 0.7])
-    p.add_argument("--collect-only", action="store_true",
-                   help="bo qua train, chi do lai tu checkpoint da co va ve")
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--ratios", nargs="+", type=float, default=[0.3, 0.4, 0.5, 0.6, 0.7])
+    p.add_argument("--collect-only", action="store_true", help="bo qua train, chi do lai tu checkpoint da co va ve")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--stage", nargs="+", default=["prune", "finetune", "val"],
-                   help="stage truyen xuong run_e2e.py cho moi ratio")
-    p.add_argument("--no-baseline", action="store_true",
-                   help="khong ve diem baseline (ratio 0)")
+    p.add_argument(
+        "--stage", nargs="+", default=["prune", "finetune", "val"], help="stage truyen xuong run_e2e.py cho moi ratio"
+    )
+    p.add_argument("--no-baseline", action="store_true", help="khong ve diem baseline (ratio 0)")
     # chuyen tiep xuong run_e2e.py
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--imgsz", type=int, default=640)
@@ -209,12 +266,27 @@ def parse_args():
 
 
 def run_one(a, ratio):
-    cmd = [sys.executable, str(ROOT / "scripts" / "run_e2e.py"),
-           "--stage", *a.stage,
-           "--prune-ratio", str(ratio), "--tag", tag_of(ratio),
-           "--epochs", str(a.epochs), "--imgsz", str(a.imgsz),
-           "--batch", str(a.batch), "--device", str(a.device),
-           "--data", a.data, "--resume"]
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "run_e2e.py"),
+        "--stage",
+        *a.stage,
+        "--prune-ratio",
+        str(ratio),
+        "--tag",
+        tag_of(ratio),
+        "--epochs",
+        str(a.epochs),
+        "--imgsz",
+        str(a.imgsz),
+        "--batch",
+        str(a.batch),
+        "--device",
+        str(a.device),
+        "--data",
+        a.data,
+        "--resume",
+    ]
     print("  " + " ".join(cmd), flush=True)
     return subprocess.run(cmd, cwd=str(ROOT)).returncode
 
@@ -233,14 +305,15 @@ def main():
         print("\n  --dry-run: dung o day.")
         return
 
-    # ── train tung ratio ──
+    # ── train tongue ratio ──
     if not a.collect_only:
         for r in ratios:
             banner(f"RATIO {r:.0%}  (tag {tag_of(r)})")
             t0 = time.time()
             rc = run_one(a, r)
-            print(f"\n  ratio {r:.0%}: {'OK' if rc == 0 else f'that bai (rc={rc})'} "
-                  f"sau {(time.time()-t0)/3600:.2f}h")
+            print(
+                f"\n  ratio {r:.0%}: {'OK' if rc == 0 else f'that bai (rc={rc})'} sau {(time.time() - t0) / 3600:.2f}h"
+            )
             if rc != 0:
                 print("  -> bo qua ratio nay, chay tiep cai sau.")
 
@@ -273,19 +346,25 @@ def main():
                 ap = ent[sub]["AP50"]
                 if (sub == "pruned") == (label != "baseline"):
                     break
-        rows.append({"label": label if label == "baseline" else f"{r:.0%}",
-                     "ratio": r, "weights": str(w),
-                     "Params (M)": round(params, 2) if params == params else None,
-                     "GFLOPs": round(gflops, 1) if gflops == gflops else float("nan"),
-                     "Latency (ms)": round(lat, 2) if lat == lat else float("nan"),
-                     "FPS": round(fps, 1) if fps == fps else float("nan"),
-                     "AP50": ap})
+        rows.append(
+            {
+                "label": label if label == "baseline" else f"{r:.0%}",
+                "ratio": r,
+                "weights": str(w),
+                "Params (M)": round(params, 2) if params == params else None,
+                "GFLOPs": round(gflops, 1) if gflops == gflops else float("nan"),
+                "Latency (ms)": round(lat, 2) if lat == lat else float("nan"),
+                "FPS": round(fps, 1) if fps == fps else float("nan"),
+                "AP50": ap,
+            }
+        )
         print(f"    AP50={ap}  {params:.2f}M  {gflops:.1f}G  {lat:.2f}ms")
 
     if not rows:
         raise SystemExit("!! Khong gom duoc dong nao.")
 
     import pandas as pd
+
     df = pd.DataFrame(rows)
     CSV_OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(CSV_OUT, index=False)
