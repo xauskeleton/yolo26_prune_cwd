@@ -133,7 +133,7 @@ cfg: # (str, optional) path to a config.yaml that overrides defaults
 tracker: botsort.yaml # (str) tracker config file: botsort.yaml or bytetrack.yaml
 
 # Pruning + Distillation (fork) -----------------------------------------------------------------------------------------
-# Cac tham so nay PHAI nam trong default.yaml de lot vao trainer.args.
+# Cac than so nay PHAI nam trong default.yaml de lot vao trainer.args.
 # Ly do: ultralytics/utils/dist.py:generate_ddp_file() chi serialize vars(trainer.args)
 # sang tien trinh con DDP. Truoc day chung chi duoc gan len object trainer nen tien
 # trinh con mat sach -> kd_enabled=False -> train khong he co distillation ma khong bao loi.

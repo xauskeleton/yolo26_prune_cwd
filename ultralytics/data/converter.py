@@ -494,7 +494,7 @@ def convert_dota_to_yolo_obb(dota_root_path: str):
                 formatted_coords = [f"{coord:.6g}" for coord in normalized_coords]
                 g.write(f"{class_idx} {' '.join(formatted_coords)}\n")
 
-    for phase in {"train", "val"}:
+    for phase in ("train", "val"):
         image_dir = dota_root_path / "images" / phase
         orig_label_dir = dota_root_path / "labels" / f"{phase}_original"
         save_dir = dota_root_path / "labels" / phase
@@ -606,7 +606,7 @@ def yolo_bbox2segment(im_dir: str | Path, save_dir: str | Path | None = None, sa
     from ultralytics.utils.ops import xywh2xyxy
 
     # NOTE: add placeholder to pass class index check
-    dataset = YOLODataset(im_dir, data=dict(names=list(range(1000)), channels=3))
+    dataset = YOLODataset(im_dir, data={"names": list(range(1000)), "channels": 3})
     if len(dataset.labels[0]["segments"]) > 0:  # if it's segment data
         LOGGER.info("Segmentation labels detected, no need to generate new ones!")
         return
@@ -676,7 +676,7 @@ def create_synthetic_coco_dataset():
     # Create synthetic images
     shutil.rmtree(dir / "labels" / "test2017", ignore_errors=True)  # Remove test2017 directory as not needed
     with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
-        for subset in {"train2017", "val2017"}:
+        for subset in ("train2017", "val2017"):
             subset_dir = dir / "images" / subset
             subset_dir.mkdir(parents=True, exist_ok=True)
 
@@ -841,28 +841,27 @@ async def convert_ndjson_to_yolo(ndjson_path: str | Path, output_path: str | Pat
                 image_path = dataset_dir / "images" / split / original_name
                 label_path = dataset_dir / "labels" / split / f"{Path(original_name).stem}.txt"
                 lines_to_write = []
-                for key in annotations.keys():
+                for key in annotations:
                     lines_to_write = [" ".join(map(str, item)) for item in annotations[key]]
                     break
                 label_path.write_text("\n".join(lines_to_write) + "\n" if lines_to_write else "")
 
             # Download image if URL provided and file doesn't exist
-            if http_url := record.get("url"):
-                if not image_path.exists():
-                    image_path.parent.mkdir(parents=True, exist_ok=True)
-                    # Retry with exponential backoff (3 attempts: 0s, 2s, 4s delays)
-                    for attempt in range(3):
-                        try:
-                            async with session.get(http_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                                response.raise_for_status()
-                                image_path.write_bytes(await response.read())
-                            return True
-                        except Exception as e:
-                            if attempt < 2:  # Don't sleep after last attempt
-                                await asyncio.sleep(2**attempt)  # 1s, 2s backoff
-                            else:
-                                LOGGER.warning(f"Failed to download {http_url} after 3 attempts: {e}")
-                                return False
+            if (http_url := record.get("url")) and not image_path.exists():
+                image_path.parent.mkdir(parents=True, exist_ok=True)
+                # Retry with exponential backoff (3 attempts: 0s, 2s, 4s delays)
+                for attempt in range(3):
+                    try:
+                        async with session.get(http_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                            response.raise_for_status()
+                            image_path.write_bytes(await response.read())
+                        return True
+                    except Exception as e:
+                        if attempt < 2:  # Don't sleep after last attempt
+                            await asyncio.sleep(2**attempt)  # 1s, 2s backoff
+                        else:
+                            LOGGER.warning(f"Failed to download {http_url} after 3 attempts: {e}")
+                            return False
             return True
 
     # Process all images with async downloads (limit connections for small datasets)
