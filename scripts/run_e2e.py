@@ -35,15 +35,14 @@ sys.path.insert(0, str(ROOT / "pruning"))
 # sinh tien trinh con chay mot file tam trong /root/.config/Ultralytics/DDP/ nen
 # sys.path[0] cua no la thu muc do -> "No module named 'ultralytics'".
 # PYTHONPATH di theo os.environ xuong moi tien trinh con, ke ca torch.distributed.run.
-os.environ["PYTHONPATH"] = os.pathsep.join(
-    x for x in (str(ROOT), os.environ.get("PYTHONPATH", "")) if x
-)
+os.environ["PYTHONPATH"] = os.pathsep.join(x for x in (str(ROOT), os.environ.get("PYTHONPATH", "")) if x)
 
 MANIFEST = ROOT / "results" / "e2e_manifest.json"
 STAGES = ["baseline", "prune", "finetune", "val", "export", "bench"]
 
 
 # ───────────────────────────── manifest ─────────────────────────────
+
 
 def load_manifest():
     if MANIFEST.exists():
@@ -75,28 +74,31 @@ def need(man, stage, key):
 
 
 def dkey(a):
-    """Hau to theo dataset. Baseline gan chat voi dataset (khac nc, khac anh) nen
-    khong the dung chung giua VOC va VisDrone. VOC giu nguyen ten cu de khong pha
-    manifest / weights da sinh ra truoc do."""
+    """Hau to theo dataset. Baseline gan chat voi dataset (khac nc, khac anh) nen khong the dung chung giua VOC va
+    VisDrone. VOC giu nguyen ten cu de khong pha manifest / weights da sinh ra truoc do.
+    """
     stem = Path(a.data).stem
     return "" if stem == "VOC" else f"_{stem}"
 
 
 def skey(a, stage):
-    """Key trong manifest. baseline dung chung cho moi ratio TREN CUNG DATASET;
-    cac stage con lai phai tach theo tag, neu khong quet nhieu ratio se ghi de."""
+    """Key trong manifest. baseline dung chung cho moi ratio TREN CUNG DATASET; cac stage con lai phai tach theo tag,
+    neu khong quet nhieu ratio se ghi de.
+    """
     return "baseline" + dkey(a) if stage == "baseline" else f"{stage}@{a.tag}"
 
 
 def banner(title):
-    print(f"\n{'='*100}\n  {title}\n{'='*100}\n", flush=True)
+    print(f"\n{'=' * 100}\n  {title}\n{'=' * 100}\n", flush=True)
 
 
 def free_gpu():
     """Tra VRAM lai sau moi stage train - neu khong TRT export rat de OOM."""
     try:
         import gc
+
         import torch
+
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -107,15 +109,15 @@ def free_gpu():
 def done_epochs(run_dir):
     """So epoch DA train xong, doc tu results.csv.
 
-    KHONG duoc dung su ton tai cua best.pt de ket luan "da xong": mot phien bi
-    cat ngang van de lai best.pt cua epoch dang do, va no se bi ghi nhan nham
-    thanh ket qua cuoi.
+    KHONG duoc dung su ton tai cua best.pt de ket luan "da xong": mot phien bi cat ngang van de lai best.pt cua epoch
+    dang do, va no se bi ghi nhan nham thanh ket qua cuoi.
     """
     run_dir = Path(run_dir)
     csv = run_dir / "results.csv"
     if csv.exists():
         try:
             import pandas as pd
+
             df = pd.read_csv(csv)
             df.columns = df.columns.str.strip()
             if len(df) and "epoch" in df:
@@ -129,6 +131,7 @@ def done_epochs(run_dir):
     if last.exists():
         try:
             import torch
+
             ck = torch.load(last, map_location="cpu", weights_only=False)
             ep = int(ck.get("epoch", -1))
             total = int((ck.get("train_args") or {}).get("epochs", 0) or 0)
@@ -143,10 +146,9 @@ def done_epochs(run_dir):
 def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
     """Train moi, hoac train TIEP tu last.pt neu phien truoc bi cat ngang.
 
-    Nguyen tac: HE CO last.pt LA RESUME. Khong lay so epoch doc duoc lam dieu
-    kien, vi neu doc that bai (vd torch.load loi) thi se am tham train lai tu
-    dau - mat ca chuc gio ma khong bao gi. Ultralytics tu doc epoch trong
-    checkpoint, khong can minh dem ho.
+    Nguyen tac: HE CO last.pt LA RESUME. Khong lay so epoch doc duoc lam dieu kien, vi neu doc that bai (vd torch.load
+    loi) thi se am than train lai tu dau - mat ca chuc gio ma khong bao gi. Ultralytics tu doc epoch trong checkpoint,
+    khong can minh dem ho.
     """
     from ultralytics import YOLO
 
@@ -162,8 +164,7 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
 
         print(f"  -> RESUME tu {last}  (da co {done if done else '?'}/{epochs} epoch)")
         if not done:
-            print("     (khong doc duoc so epoch tu results.csv lan checkpoint,"
-                  " van resume chu KHONG train lai tu dau)")
+            print("     (khong doc duoc so epoch tu results.csv lan checkpoint, van resume chu KHONG train lai tu dau)")
         m = (build or YOLO)(str(last))
         # Resume thay TOAN BO args bang args trong checkpoint (trainer.check_resume),
         # chi giu lai mot danh sach khoa duoc phep ghi de. stop_after_h la ngan sach
@@ -175,7 +176,7 @@ def train_or_resume(spec_weights, run_dir, kw, epochs, build=None):
             # Ultralytics tu choi resume mot run da ket thuc (vd early stop).
             # Khi do coi nhu xong o so epoch dang co, dung best.pt.
             if "finished" in str(exc).lower() or "nothing to resume" in str(exc).lower():
-                print(f"  (run da ket thuc som o epoch {done}: {exc})")
+                print(f"  (run da ket thuc some o epoch {done}: {exc})")
                 best = run_dir / "weights" / "best.pt"
                 return (build or YOLO)(str(best if best.exists() else last)), done
             raise
@@ -198,15 +199,23 @@ def best_of(trainer):
 
 # ───────────────────────────── stages ─────────────────────────────
 
+
 def stage_baseline(a, man):
     """Train yolo26m tren VOC tu trong so COCO."""
     banner(f"STAGE 1/6  BASELINE  ({a.pretrained} -> {a.epochs} epoch)")
-    from ultralytics import YOLO
 
-    kw = dict(data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
-              device=a.device, seed=a.seed, project=a.project,
-              name="baseline" + dkey(a),
-              exist_ok=True, stop_after_h=a.stop_after_h)
+    kw = {
+        "data": a.data,
+        "epochs": a.epochs,
+        "imgsz": a.imgsz,
+        "batch": a.batch,
+        "device": a.device,
+        "seed": a.seed,
+        "project": a.project,
+        "name": "baseline" + dkey(a),
+        "exist_ok": True,
+        "stop_after_h": a.stop_after_h,
+    }
     run_dir = Path(a.project) / ("baseline" + dkey(a))
     model, ep = train_or_resume(a.pretrained, run_dir, kw, a.epochs)
 
@@ -233,19 +242,27 @@ def stage_prune(a, man):
     from prune_l1norm import compute_l1norm_importance
 
     src = a.baseline_weights or need(man, skey(a, "baseline"), "weights")
-    model, bn_dict, ignore_bn_list, _chunk, layer_ratio_cfg, pruned_yaml = \
-        load_and_prepare(src, a.cfg, a.model_size, a.layer_ratio)
+    model, bn_dict, ignore_bn_list, _chunk, layer_ratio_cfg, pruned_yaml = load_and_prepare(
+        src, a.cfg, a.model_size, a.layer_ratio
+    )
 
     # Repo clone ve KHONG co thu muc weights/ (bi gitignore), ma finalize_pruning
     # goi torch.save thang -> "Parent directory ... does not exist".
     (ROOT / "weights").mkdir(parents=True, exist_ok=True)
 
     importance = compute_l1norm_importance(model, bn_dict, ignore_bn_list)
-    maskbndict = create_masks(importance, model, ignore_bn_list, layer_ratio_cfg,
-                              a.prune_ratio, a.divisor)
-    pruned = finalize_pruning(model, maskbndict, pruned_yaml, ignore_bn_list,
-                              src, str(ROOT / "weights"), a.divisor, a.prune_ratio,
-                              method_name="l1norm")
+    maskbndict = create_masks(importance, model, ignore_bn_list, layer_ratio_cfg, a.prune_ratio, a.divisor)
+    pruned = finalize_pruning(
+        model,
+        maskbndict,
+        pruned_yaml,
+        ignore_bn_list,
+        src,
+        str(ROOT / "weights"),
+        a.divisor,
+        a.prune_ratio,
+        method_name="l1norm",
+    )
 
     # finalize_pruning dat ten theo <stem>_l1norm_div<N>.pt - KHONG co ratio trong ten,
     # nen quet nhieu ratio se de len nhau. Doi ten theo tag.
@@ -253,16 +270,21 @@ def stage_prune(a, man):
     Path(pruned).replace(tagged)
     print(f"  -> {tagged}")
 
-    record(man, skey(a, "prune"), weights=str(tagged), source=str(src),
-           prune_ratio=a.prune_ratio, divisor=a.divisor,
-           layer_ratio=a.layer_ratio or "uniform")
+    record(
+        man,
+        skey(a, "prune"),
+        weights=str(tagged),
+        source=str(src),
+        prune_ratio=a.prune_ratio,
+        divisor=a.divisor,
+        layer_ratio=a.layer_ratio or "uniform",
+    )
     free_gpu()
 
 
 def stage_finetune(a, man):
     """Finetune model da prune, co CWD distillation tu baseline."""
     banner(f"STAGE 3/6  FINETUNE + {a.kd_method.upper()}  ({a.epochs} epoch)")
-    from ultralytics import YOLO
 
     # DDP chi an toan khi fork da dua custom args vao default.yaml.
     # dist.py:generate_ddp_file() chi serialize vars(trainer.args); neu kd/finetune
@@ -270,24 +292,40 @@ def stage_finetune(a, man):
     # epoch KHONG he co distillation ma khong bao loi gi. Kiem tra truoc khi chay.
     if a.kd_method != "none" and isinstance(a.device, (list, tuple)):
         from ultralytics.utils import DEFAULT_CFG
-        thieu = [k for k in ("kd", "kd_teacher", "finetune", "cwd_temperature")
-                 if not hasattr(DEFAULT_CFG, k)]
+
+        thieu = [k for k in ("kd", "kd_teacher", "finetune", "cwd_temperature") if not hasattr(DEFAULT_CFG, k)]
         if thieu:
             raise SystemExit(
-                "!! Fork nay chua co {} trong ultralytics/cfg/default.yaml." + chr(10) +
-                "   DDP se lam MAT CWD am tham. Cap nhat repo, hoac chay --device 0."
-                .format(", ".join(thieu))
+                "!! Fork nay chua co {} trong ultralytics/cfg/default.yaml."
+                + chr(10)
+                + "   DDP se lam MAT CWD am than. Cap nhat repo, hoac chay --device 0."
             )
 
     pruned = a.pruned_weights or need(man, skey(a, "prune"), "weights")
     teacher = a.teacher_weights or need(man, skey(a, "baseline"), "weights")
 
-    kw = dict(data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
-              device=a.device, seed=a.seed, project=a.project, name=f"finetune_{a.tag}",
-              exist_ok=True, finetune=True, stop_after_h=a.stop_after_h)
+    kw = {
+        "data": a.data,
+        "epochs": a.epochs,
+        "imgsz": a.imgsz,
+        "batch": a.batch,
+        "device": a.device,
+        "seed": a.seed,
+        "project": a.project,
+        "name": f"finetune_{a.tag}",
+        "exist_ok": True,
+        "finetune": True,
+        "stop_after_h": a.stop_after_h,
+    }
     if a.kd_method != "none":
-        kw.update(kd=True, kd_teacher=teacher, kd_method=a.kd_method,
-                  kd_lambda=a.kd_lambda, kd_layers=a.kd_layers, kd_warmup=a.kd_warmup)
+        kw.update(
+            kd=True,
+            kd_teacher=teacher,
+            kd_method=a.kd_method,
+            kd_lambda=a.kd_lambda,
+            kd_layers=a.kd_layers,
+            kd_warmup=a.kd_warmup,
+        )
         if a.kd_method == "cwd":
             kw["cwd_temperature"] = a.cwd_temperature
 
@@ -308,9 +346,18 @@ def stage_finetune(a, man):
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best, dst)
     print(f"\n  final -> {dst}")
-    record(man, skey(a, "finetune"), weights=str(dst), run=best, teacher=str(teacher),
-           kd_method=a.kd_method, kd_layers=a.kd_layers, kd_warmup=a.kd_warmup,
-           kd_lambda=a.kd_lambda, cwd_temperature=a.cwd_temperature)
+    record(
+        man,
+        skey(a, "finetune"),
+        weights=str(dst),
+        run=best,
+        teacher=str(teacher),
+        kd_method=a.kd_method,
+        kd_layers=a.kd_layers,
+        kd_warmup=a.kd_warmup,
+        kd_lambda=a.kd_lambda,
+        cwd_temperature=a.cwd_temperature,
+    )
     free_gpu()
 
 
@@ -332,7 +379,7 @@ def stage_val(a, man):
     if a.val_weights:
         targets = [(Path(w).stem, w) for w in a.val_weights]
     if not targets:
-        # Truong hop binh thuong: finetune vua dung som do het ngan sach gio nen
+        # Truong hop binh thuong: finetune vua dung some do het ngan sach gio nen
         # chua ghi vao manifest. KHONG raise - phai thoat ma 0 de notebook Kaggle
         # ket thuc BINH THUONG va output duoc luu, neu khong thi mat ca phien.
         print("  Chua co checkpoint nao de val (finetune chua du epoch).")
@@ -349,12 +396,13 @@ def stage_val(a, man):
             params = sum(p.numel() for p in m.model.parameters()) / 1e6
         except Exception:
             params = float("nan")
-        out[tag] = {"weights": str(w),
-                    "AP50": round(float(r.box.map50) * 100, 2),
-                    "AP50_95": round(float(r.box.map) * 100, 2),
-                    "params_M": round(params, 2)}
-        print(f"    AP50={out[tag]['AP50']}  AP50-95={out[tag]['AP50_95']}  "
-              f"{out[tag]['params_M']}M")
+        out[tag] = {
+            "weights": str(w),
+            "AP50": round(float(r.box.map50) * 100, 2),
+            "AP50_95": round(float(r.box.map) * 100, 2),
+            "params_M": round(params, 2),
+        }
+        print(f"    AP50={out[tag]['AP50']}  AP50-95={out[tag]['AP50_95']}  {out[tag]['params_M']}M")
         free_gpu()
 
     record(man, skey(a, "val"), **out)
@@ -363,8 +411,8 @@ def stage_val(a, man):
 def stage_export(a, man):
     """Export ONNX (+ TensorRT FP16 neu co). Chay tien trinh rieng de khong dung VRAM cu.
 
-    Khong goi tools/export_for_benchmark.py vi file do chi export TensorRT du
-    docstring ghi 'ONNX + TorchScript'. Bai co so ONNX nen phai export ONNX that.
+    Khong goi tools/export_for_benchmark.py vi file do chi export TensorRT du docstring ghi 'ONNX + TorchScript'. Bai co
+    so ONNX nen phai export ONNX that.
     """
     banner("STAGE 5/6  EXPORT")
     final = a.export_weights or need(man, skey(a, "finetune"), "weights")
@@ -381,8 +429,7 @@ def stage_export(a, man):
             f" half={fmt == 'engine'});"
             f"print('EXPORTED:' + str(p))"
         )
-        r = subprocess.run([sys.executable, "-c", snippet], cwd=str(ROOT),
-                           capture_output=True, text=True)
+        r = subprocess.run([sys.executable, "-c", snippet], cwd=str(ROOT), capture_output=True, text=True)
         line = next((l for l in r.stdout.splitlines() if l.startswith("EXPORTED:")), None)
         if r.returncode != 0 or not line:
             print(f"    !! export {fmt} that bai (bo qua):")
@@ -392,7 +439,7 @@ def stage_export(a, man):
         dst = save_dir / f"{Path(final).stem}{src.suffix}"
         if src.resolve() != dst.resolve():
             shutil.move(str(src), dst)
-        print(f"    -> {dst}  ({dst.stat().st_size/1e6:.1f} MB)")
+        print(f"    -> {dst}  ({dst.stat().st_size / 1e6:.1f} MB)")
         produced[fmt] = str(dst)
 
     if not produced:
@@ -404,18 +451,25 @@ def stage_bench(a, man):
     """Do toc do bang tools/speed_kaggle.py (tien trinh rieng, VRAM sach)."""
     banner(f"STAGE 6/6  BENCH  (mode: {' '.join(a.bench_mode)})")
     weights = a.bench_weights or [
-        w for w in (man.get("baseline", {}).get("weights"),
-                    man.get(skey(a, "finetune"), {}).get("weights")) if w
+        w for w in (man.get("baseline", {}).get("weights"), man.get(skey(a, "finetune"), {}).get("weights")) if w
     ]
     if not weights:
         raise SystemExit("!! Khong co checkpoint nao de bench.")
 
     log = Path(a.project) / f"bench_{a.tag}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, str(ROOT / "tools" / "speed_kaggle.py"),
-           "--weights", *map(str, weights),
-           "--imgsz", str(a.imgsz), "--mode", *a.bench_mode,
-           "--threads", str(a.threads)]
+    cmd = [
+        sys.executable,
+        str(ROOT / "tools" / "speed_kaggle.py"),
+        "--weights",
+        *map(str, weights),
+        "--imgsz",
+        str(a.imgsz),
+        "--mode",
+        *a.bench_mode,
+        "--threads",
+        str(a.threads),
+    ]
     print("  " + " ".join(cmd))
     r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
     log.write_text(r.stdout + "\n" + r.stderr, encoding="utf-8")
@@ -425,12 +479,24 @@ def stage_bench(a, man):
     record(man, skey(a, "bench"), log=str(log), modes=a.bench_mode, weights=list(map(str, weights)))
 
 
-RUNNERS = {"baseline": stage_baseline, "prune": stage_prune, "finetune": stage_finetune,
-           "val": stage_val, "export": stage_export, "bench": stage_bench}
+RUNNERS = {
+    "baseline": stage_baseline,
+    "prune": stage_prune,
+    "finetune": stage_finetune,
+    "val": stage_val,
+    "export": stage_export,
+    "bench": stage_bench,
+}
 
 # --resume: stage coi nhu xong khi key nay da co trong manifest va file con ton tai
-DONE_KEY = {"baseline": "weights", "prune": "weights", "finetune": "weights",
-            "val": "pruned", "export": "onnx", "bench": "log"}
+DONE_KEY = {
+    "baseline": "weights",
+    "prune": "weights",
+    "finetune": "weights",
+    "val": "pruned",
+    "export": "onnx",
+    "bench": "log",
+}
 
 
 def is_done(man, stage, a=None):
@@ -439,23 +505,28 @@ def is_done(man, stage, a=None):
     if not val:
         return False
     if stage == "val":
-        return True                      # val luu dict metric, khong phai duong dan
+        return True  # val luu dict metric, khong phai duong dan
     return Path(val).exists()
 
 
 # ───────────────────────────── main ─────────────────────────────
 
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Chay end-to-end: baseline -> prune -> finetune+CWD -> val -> export -> bench",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
 
-    p.add_argument("--stage", nargs="+", default=["all"], choices=STAGES + ["all"])
+    p.add_argument("--stage", nargs="+", default=["all"], choices=[*STAGES, "all"])
     p.add_argument("--resume", action="store_true", help="bo qua stage da co output")
     p.add_argument("--dry-run", action="store_true", help="chi in ke hoach, khong chay")
-    p.add_argument("--tag", default=None,
-                   help="nhan cho lan chay nay (mac dinh r<ratio>, vd r50). Quet nhieu "
-                        "ratio thi moi ratio mot tag -> khong ghi de len nhau.")
+    p.add_argument(
+        "--tag",
+        default=None,
+        help="nhan cho lan chay nay (mac dinh r<ratio>, vd r50). Quet nhieu "
+        "ratio thi moi ratio mot tag -> khong ghi de len nhau.",
+    )
 
     g = p.add_argument_group("du lieu / model")
     g.add_argument("--data", default="VOC.yaml")
@@ -470,9 +541,13 @@ def parse_args():
     g.add_argument("--batch", type=int, default=16)
     g.add_argument("--device", default="0", help='"0" mot GPU, "0,1" dung DDP 2 GPU')
     g.add_argument("--seed", type=int, default=0)
-    g.add_argument("--stop-after-h", type=float, default=10.0,
-                   help="Dung train sau N gio va luu last.pt (phien Kaggle toi da 12h). "
-                        "epochs KHONG doi, phien sau resume chay tiep. 0 = tat.")
+    g.add_argument(
+        "--stop-after-h",
+        type=float,
+        default=10.0,
+        help="Dung train sau N gio va luu last.pt (phien Kaggle toi da 12h). "
+        "epochs KHONG doi, phien sau resume chay tiep. 0 = tat.",
+    )
 
     g = p.add_argument_group("prune")
     g.add_argument("--prune-ratio", type=float, default=0.5)
@@ -489,8 +564,12 @@ def parse_args():
     g = p.add_argument_group("export / bench")
     g.add_argument("--export-format", nargs="+", default=["onnx", "engine"])
     g.add_argument("--export-dir", default=str(ROOT / "export_out"))
-    g.add_argument("--bench-mode", nargs="+", default=["gpu_fp32", "gpu_fp16", "tensorrt"],
-                   choices=["gpu_fp32", "gpu_fp16", "tensorrt", "onnx_cpu", "cpu"])
+    g.add_argument(
+        "--bench-mode",
+        nargs="+",
+        default=["gpu_fp32", "gpu_fp16", "tensorrt"],
+        choices=["gpu_fp32", "gpu_fp16", "tensorrt", "onnx_cpu", "cpu"],
+    )
     g.add_argument("--threads", type=int, default=2, help="so luong CPU cho mode onnx_cpu/cpu")
 
     g = p.add_argument_group("vao thang mot stage (bo qua manifest)")
@@ -504,7 +583,7 @@ def parse_args():
     a = p.parse_args()
     a.stage = STAGES if "all" in a.stage else [s for s in STAGES if s in a.stage]
     if not a.tag:
-        a.tag = f"r{int(round(a.prune_ratio * 100))}"
+        a.tag = f"r{round(a.prune_ratio * 100)}"
     # "0" -> 0 ; "0,1" -> [0, 1] (DDP). Ultralytics chia batch cho so GPU, khong nhan len:
     # batch=16 voi 2 GPU van la batch hieu dung 16, moi GPU 8 mau.
     if isinstance(a.device, str):
@@ -527,8 +606,10 @@ def main():
         mark = "BO QUA (da xong)" if s in skipped else "chay"
         print(f"  {s:<10} {mark}")
     print(f"\n  data={a.data}  epochs={a.epochs}  imgsz={a.imgsz}  batch={a.batch}  device={a.device}")
-    print(f"  prune={a.prune_ratio:.0%} div{a.divisor}  kd={a.kd_method} "
-          f"lambda={a.kd_lambda} layers={a.kd_layers} warmup={a.kd_warmup} tau={a.cwd_temperature}")
+    print(
+        f"  prune={a.prune_ratio:.0%} div{a.divisor}  kd={a.kd_method} "
+        f"lambda={a.kd_lambda} layers={a.kd_layers} warmup={a.kd_warmup} tau={a.cwd_temperature}"
+    )
     print(f"  tag={a.tag}   manifest={MANIFEST}")
 
     if a.dry_run:
@@ -542,9 +623,9 @@ def main():
     for s in plan:
         t0 = time.time()
         RUNNERS[s](a, man)
-        print(f"\n  [{s}] xong sau {(time.time()-t0)/3600:.2f}h")
+        print(f"\n  [{s}] xong sau {(time.time() - t0) / 3600:.2f}h")
 
-    banner(f"HOAN TAT sau {(time.time()-t_all)/3600:.2f}h")
+    banner(f"HOAN TAT sau {(time.time() - t_all) / 3600:.2f}h")
     print(json.dumps(man, indent=2, ensure_ascii=False))
     print(f"\nManifest: {MANIFEST}")
 

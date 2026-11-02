@@ -769,7 +769,7 @@ class Model(torch.nn.Module):
         if args.get("resume"):
             args["resume"] = self.ckpt_path
 
-        # ==================== Pop custom args (Ultralytics bao loi neu gap tham so la) ====================
+        # ==================== Pop custom args (Ultralytics bao loi neu gap than so la) ====================
         sr = args.get("sr", None)
         if sr is not None:
             args.pop("sr")
@@ -799,6 +799,7 @@ class Model(torch.nn.Module):
         # ==================== Resume: restore custom args tu checkpoint ====================
         if args.get("resume"):
             import torch
+
             _ckpt_path = args["resume"]
             if isinstance(_ckpt_path, (str, Path)) and Path(_ckpt_path).exists():
                 _ckpt = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
@@ -858,16 +859,26 @@ class Model(torch.nn.Module):
         args.update(
             sr=sr,
             finetune=finetune,
-            dms=dms, dms_target=dms_target, dms_lambda=dms_lambda, dms_lr=dms_lr,
-            dms_taylor_type=dms_taylor_type, dms_decay_ratio=dms_decay_ratio,
+            dms=dms,
+            dms_target=dms_target,
+            dms_lambda=dms_lambda,
+            dms_lr=dms_lr,
+            dms_taylor_type=dms_taylor_type,
+            dms_decay_ratio=dms_decay_ratio,
             dms_grad_scale=dms_grad_scale,
-            kd=kd, kd_teacher=kd_teacher, kd_lambda=kd_lambda, kd_method=kd_method,
-            kd_layers=kd_layers, kd_warmup=kd_warmup,
+            kd=kd,
+            kd_teacher=kd_teacher,
+            kd_lambda=kd_lambda,
+            kd_method=kd_method,
+            kd_layers=kd_layers,
+            kd_warmup=kd_warmup,
             cwd_temperature=cwd_temperature,
             cwd_learnable_tau_lr=cwd_learnable_tau_lr,
             cwd_learnable_tau_init=cwd_learnable_tau_init,
-            cwd_tau_reg=cwd_tau_reg, cwd_projection=cwd_projection,
-            mgd_mask_ratio=mgd_mask_ratio, fitnets_normalize=fitnets_normalize,
+            cwd_tau_reg=cwd_tau_reg,
+            cwd_projection=cwd_projection,
+            mgd_mask_ratio=mgd_mask_ratio,
+            fitnets_normalize=fitnets_normalize,
         )
         # ==================== Dua custom args NGUOC lai vao overrides ====================
 
@@ -1132,7 +1143,7 @@ class Model(torch.nn.Module):
             >>> model.reset_callbacks()
             # All callbacks are now reset to their default functions
         """
-        for event in callbacks.default_callbacks.keys():
+        for event in callbacks.default_callbacks:
             self.callbacks[event] = [callbacks.default_callbacks[event][0]]
 
     @staticmethod
