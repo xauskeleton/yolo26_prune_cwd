@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
 """Chay thu vd_common.setup_dataset() tren cay /kaggle/input gia.
 
 Kiem tra ba truong hop: da co san, tim thay trong input (lien ket anh + chep
 nhan), va khong co gi trong input.
 """
+
 import pathlib
 import shutil
 import sys
@@ -19,11 +19,12 @@ SRC = (ROOT / "notebooks" / "share_visdrone" / "vd_common.py").read_text(encodin
 def load(input_dir, temp_dir):
     """Nap vd_common voi /kaggle/... tro toi thu muc tam."""
     mod = types.ModuleType("vd_common_ds")
-    code = (SRC.replace('"/kaggle/input/', '"' + str(input_dir).replace("\\", "/") + "/")
-               .replace('Path("/kaggle/temp")', 'Path("{}")'.format(str(temp_dir).replace("\\", "/")))
-               .replace('Path("/kaggle")', 'Path("{}")'.format(str(temp_dir.parent).replace("\\", "/")))
-               .replace('Path("/kaggle/temp/datasets")',
-                        'Path("{}/datasets")'.format(str(temp_dir).replace("\\", "/"))))
+    code = (
+        SRC.replace('"/kaggle/input/', '"' + str(input_dir).replace("\\", "/") + "/")
+        .replace('Path("/kaggle/temp")', 'Path("{}")'.format(str(temp_dir).replace("\\", "/")))
+        .replace('Path("/kaggle")', 'Path("{}")'.format(str(temp_dir.parent).replace("\\", "/")))
+        .replace('Path("/kaggle/temp/datasets")', 'Path("{}/datasets")'.format(str(temp_dir).replace("\\", "/")))
+    )
     exec(compile(code, "vd_common_ds", "exec"), mod.__dict__)
     return mod
 
@@ -71,16 +72,16 @@ def case(title, build):
 
 res = []
 
-ok, dst = case("1. Tim thay trong /kaggle/input -> dung lai",
-               lambda inp, td: make_src(inp / "ds" / "yolo" / "datasets" / "VisDrone"))
+ok, dst = case(
+    "1. Tim thay trong /kaggle/input -> dung lai",
+    lambda inp, td: make_src(inp / "ds" / "yolo" / "datasets" / "VisDrone"),
+)
 res.append(ok and dst is not None)
 
-ok, dst = case("2. Khong co gi trong input -> tra ve None de Ultralytics tai",
-               lambda inp, td: None)
+ok, dst = case("2. Khong co gi trong input -> tra ve None de Ultralytics tai", lambda inp, td: None)
 res.append(dst is None)
 
-ok, dst = case("3. Da co san o datasets_dir -> khong lam gi",
-               lambda inp, td: make_src(td / "datasets" / "VisDrone"))
+ok, dst = case("3. Da co san o datasets_dir -> khong lam gi", lambda inp, td: make_src(td / "datasets" / "VisDrone"))
 res.append(ok and dst is not None)
 
 print("\n" + "=" * 68)

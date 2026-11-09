@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Dong goi checkpoint thanh zip de upload lam Kaggle dataset.
 
 Cau truc ben trong PHAI la <run_name>/weights/last.pt thi cell resume cua
@@ -7,6 +6,7 @@ MANUAL_LAST.
 
 Moi size mot zip, de hai nguoi upload song song thay vi mot goi 200 MB.
 """
+
 import pathlib
 import shutil
 import sys
@@ -32,32 +32,32 @@ for size in SIZES:
     base = find("baseline", size)
     ours = find("pruned", size)
     if not base:
-        print("{}: thieu baseline, bo qua".format(size))
+        print(f"{size}: thieu baseline, bo qua")
         continue
 
-    zp = OUT / "vd_resume_{}.zip".format(size)
+    zp = OUT / f"vd_resume_{size}.zip"
     members = []
 
     # Baseline chi can best.pt: stage prune doc no va no la teacher cho CWD.
     # Cell resume nhan ca thu muc chi co best.pt, va epochs_of() doc epoch = -1
     # (da strip optimizer = train xong) -> tra ve train_args.epochs = 100 nen
     # train() bo qua, khong goi resume tren run da ket thuc.
-    members.append((base, "vd_yolo26{}/weights/best.pt".format(size)))
+    members.append((base, f"vd_yolo26{size}/weights/best.pt"))
 
     if ours:
-        members.append((ours, "vd_ours{}/weights/last.pt".format(size)))
+        members.append((ours, f"vd_ours{size}/weights/last.pt"))
         # Phai kem CA best.pt: khi resume, Ultralytics chi ghi best.pt luc fitness
         # vuot ky luc cu. Neu cac epoch con lai khong vuot thi het lan chay van
         # khong co best.pt, va buoc do AP khong tim thay file nao de do.
         ours_best = ours.parent / ours.name.replace("_last", "_best")
         src_best = ours_best if ours_best.exists() else ours
-        members.append((src_best, "vd_ours{}/weights/best.pt".format(size)))
+        members.append((src_best, f"vd_ours{size}/weights/best.pt"))
 
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_STORED) as z:
         for src, arc in members:
             z.write(src, arc)
 
-    print("{}  ->  {:.1f} MB".format(zp, zp.stat().st_size / 1e6))
+    print(f"{zp}  ->  {zp.stat().st_size / 1e6:.1f} MB")
     for _, arc in members:
         print("     ", arc)
 
@@ -71,8 +71,8 @@ for size in SIZES:
             run = (ck.get("train_args") or {}).get("name")
             ep = ck.get("epoch")
             want = arc.split("/")[0]
-            flag = "OK" if run == want else "!! LECH (run={})".format(run)
-            print("     kiem tra {:<34} epoch={:<4} {}".format(arc, ep, flag))
+            flag = "OK" if run == want else f"!! LECH (run={run})"
+            print(f"     kiem tra {arc:<34} epoch={ep:<4} {flag}")
             del ck
             tmp.unlink()
     print()
