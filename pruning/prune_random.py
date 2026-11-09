@@ -1,5 +1,5 @@
-"""
-Random Pruning (Baseline)
+r"""
+Random Pruning (Baseline).
 =========================
 Pruning ngẫu nhiên - chọn channels để giữ lại một cách random.
 Dùng làm baseline để so sánh với các phương pháp pruning khác.
@@ -23,26 +23,21 @@ Usage:
 """
 
 import argparse
-import torch
-import torch.nn as nn
 
-from prune_common import (
-    ROOT, load_and_prepare, create_masks, finalize_pruning, add_common_args
-)
+import torch
+from prune_common import add_common_args, create_masks, finalize_pruning, load_and_prepare
 
 
 def compute_random_importance(model, bn_dict, ignore_bn_list, seed=None):
-    """
-    Tạo random importance scores cho mỗi BN layer.
+    """Tạo random importance scores cho mỗi BN layer.
 
-    Mỗi channel nhận 1 score ngẫu nhiên từ uniform(0, 1).
-    Channels có score cao hơn sẽ được giữ lại.
+    Mỗi channel nhận 1 score ngẫu nhiên từ uniform(0, 1). Channels có score cao hơn sẽ được giữ lại.
 
     Args:
-        model:          AutoBackend model
-        bn_dict:        Dict[str, BN]
+        model: AutoBackend model
+        bn_dict: Dict[str, BN]
         ignore_bn_list: List[str]
-        seed:           Optional[int] - random seed cho reproducibility
+        seed: Optional[int] - random seed cho reproducibility
 
     Returns:
         Dict[str, Tensor] - random importance per channel
@@ -63,38 +58,42 @@ def compute_random_importance(model, bn_dict, ignore_bn_list, seed=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='YOLO26 Random Pruning (Baseline)')
+    parser = argparse.ArgumentParser(description="YOLO26 Random Pruning (Baseline)")
     add_common_args(parser)
-    parser.add_argument('--seed', type=int, default=None,
-                        help='Random seed cho reproducibility')
+    parser.add_argument("--seed", type=int, default=None, help="Random seed cho reproducibility")
     opt = parser.parse_args()
 
-    print(f"\n{'='*100}")
-    print(f"RANDOM PRUNING (BASELINE)")
+    print(f"\n{'=' * 100}")
+    print("RANDOM PRUNING (BASELINE)")
     print(f"  Model:       {opt.weights}")
     print(f"  Prune ratio: {opt.prune_ratio}")
     print(f"  Divisor:     {opt.divisor}")
     print(f"  Seed:        {opt.seed or 'None (non-deterministic)'}")
-    print(f"{'='*100}\n")
+    print(f"{'=' * 100}\n")
 
     # Step 1-6: Load and prepare
-    model, bn_dict, ignore_bn_list, chunk_bn_list, layer_ratio_cfg, pruned_yaml = \
-        load_and_prepare(opt.weights, opt.cfg, opt.model_size, opt.layer_ratio)
+    model, bn_dict, ignore_bn_list, _chunk_bn_list, layer_ratio_cfg, pruned_yaml = load_and_prepare(
+        opt.weights, opt.cfg, opt.model_size, opt.layer_ratio
+    )
 
     # Compute random importance
     print("\nGenerating random importance scores...")
     importance = compute_random_importance(model, bn_dict, ignore_bn_list, seed=opt.seed)
 
     # Step 7: Create masks
-    maskbndict = create_masks(
-        importance, model, ignore_bn_list, layer_ratio_cfg, opt.prune_ratio, opt.divisor
-    )
+    maskbndict = create_masks(importance, model, ignore_bn_list, layer_ratio_cfg, opt.prune_ratio, opt.divisor)
 
     # Steps 8-11: Build, copy, save
-    save_path = finalize_pruning(
-        model, maskbndict, pruned_yaml, ignore_bn_list,
-        opt.weights, opt.save_dir, opt.divisor, opt.prune_ratio,
-        method_name="random"
+    finalize_pruning(
+        model,
+        maskbndict,
+        pruned_yaml,
+        ignore_bn_list,
+        opt.weights,
+        opt.save_dir,
+        opt.divisor,
+        opt.prune_ratio,
+        method_name="random",
     )
 
     return maskbndict, pruned_yaml
