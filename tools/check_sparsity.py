@@ -1,21 +1,21 @@
-
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-import torch
-import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
-from ultralytics import YOLO
+import torch
+from torch import nn
+
 from dms.dms_utils import build_ignore_bn_list
+from ultralytics import YOLO
 
 
 def check_sparsity(model_path, threshold=0.01):
     yolo_model = YOLO(model_path)
     model = yolo_model.model
     model.eval()
-
 
     ignore_bn_list = build_ignore_bn_list(model)
 
@@ -40,15 +40,15 @@ def check_sparsity(model_path, threshold=0.01):
     all_sparsity = (all_g < threshold).mean() * 100
     prune_sparsity = (prune_g < threshold).mean() * 100
 
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Model: {model_path}")
     print(f"Threshold: {threshold}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"{'Tat ca BN':<25} Channels: {len(all_g):>6}  Sparsity: {all_sparsity:.2f}%")
     print(f"{'Loai ignore BN':<25} Channels: {len(prune_g):>6}  Sparsity: {prune_sparsity:.2f}%")
     print(f"Ignore BN layers: {len(ignore_bn_list)}")
     print(f"Gamma mean: {prune_g.mean():.4f}  std: {prune_g.std():.4f}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Per-layer info
     print(f"\n{'Layer':<45} {'Ch':>5} {'Sparse':>6} {'%':>7} {'Ignore'}")
@@ -59,7 +59,7 @@ def check_sparsity(model_path, threshold=0.01):
         print(f"{name:<45} {total:>5} {sparse:>6} {pct:>6.1f}%{tag}")
 
     # Plot
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    _fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # 1. Histogram prunable
     axes[0].hist(prune_g, bins=100, color="crimson", alpha=0.7)
