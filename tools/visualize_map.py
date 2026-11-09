@@ -1,13 +1,15 @@
 """Visualize mAP50 and mAP50-95 across temperatures (1-10) vs finetune."""
 
 import os
-import pandas as pd
+
 import matplotlib
+import pandas as pd
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 
 BASE = "prune_ckpt/prune"
+
 
 def find_csv(name):
     """Find results.csv for a given experiment."""
@@ -19,6 +21,7 @@ def find_csv(name):
         if os.path.exists(c):
             return c
     return None
+
 
 # Load data
 experiments = {f"t{i}": f"T={i}" for i in range(1, 11)}
@@ -50,9 +53,9 @@ ft_map50_95 = best_map50_95[ft_label]
 # --- Plot 1: Bar chart comparing all ---
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-all_labels = temp_labels + [ft_label]
-all_map50 = temp_map50 + [ft_map50]
-all_map50_95 = temp_map50_95 + [ft_map50_95]
+all_labels = [*temp_labels, ft_label]
+all_map50 = [*temp_map50, ft_map50]
+all_map50_95 = [*temp_map50_95, ft_map50_95]
 
 colors = ["#4C72B0"] * 10 + ["#DD8452"]  # blue for temps, orange for finetune
 
@@ -63,8 +66,15 @@ ax.set_ylabel("mAP50 (%)", fontsize=13)
 ax.set_title("Best mAP50 (%)", fontsize=14, fontweight="bold")
 ax.set_ylim(min(all_map50) - 0.3, max(all_map50) + 0.3)
 for bar, val in zip(bars, all_map50):
-    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
-            f"{val:.2f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
+    ax.text(
+        bar.get_x() + bar.get_width() / 2,
+        bar.get_height() + 0.05,
+        f"{val:.2f}",
+        ha="center",
+        va="bottom",
+        fontsize=9,
+        fontweight="bold",
+    )
 ax.axhline(y=ft_map50, color="#DD8452", linestyle="--", alpha=0.7, label=f"Finetune = {ft_map50:.2f}%")
 ax.legend(fontsize=10)
 ax.tick_params(axis="x", rotation=45)
@@ -76,8 +86,15 @@ ax.set_ylabel("mAP50-95 (%)", fontsize=13)
 ax.set_title("Best mAP50-95 (%)", fontsize=14, fontweight="bold")
 ax.set_ylim(min(all_map50_95) - 0.3, max(all_map50_95) + 0.3)
 for bar, val in zip(bars, all_map50_95):
-    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
-            f"{val:.2f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
+    ax.text(
+        bar.get_x() + bar.get_width() / 2,
+        bar.get_height() + 0.05,
+        f"{val:.2f}",
+        ha="center",
+        va="bottom",
+        fontsize=9,
+        fontweight="bold",
+    )
 ax.axhline(y=ft_map50_95, color="#DD8452", linestyle="--", alpha=0.7, label=f"Finetune = {ft_map50_95:.2f}%")
 ax.legend(fontsize=10)
 ax.tick_params(axis="x", rotation=45)
@@ -100,8 +117,16 @@ ax1.tick_params(axis="y", labelcolor="#4C72B0")
 
 # Annotate mAP50
 for t, v in zip(temps, temp_map50):
-    ax1.annotate(f"{v:.2f}", (t, v), textcoords="offset points", xytext=(0, 10),
-                 ha="center", fontsize=8, color="#4C72B0", fontweight="bold")
+    ax1.annotate(
+        f"{v:.2f}",
+        (t, v),
+        textcoords="offset points",
+        xytext=(0, 10),
+        ha="center",
+        fontsize=8,
+        color="#4C72B0",
+        fontweight="bold",
+    )
 
 ax2 = ax1.twinx()
 ax2.plot(temps, temp_map50_95, "s-", color="#C44E52", linewidth=2, markersize=8, label="mAP50-95 (%)")
@@ -112,8 +137,16 @@ ax2.tick_params(axis="y", labelcolor="#C44E52")
 
 # Annotate mAP50-95
 for t, v in zip(temps, temp_map50_95):
-    ax2.annotate(f"{v:.2f}", (t, v), textcoords="offset points", xytext=(0, -15),
-                 ha="center", fontsize=8, color="#C44E52", fontweight="bold")
+    ax2.annotate(
+        f"{v:.2f}",
+        (t, v),
+        textcoords="offset points",
+        xytext=(0, -15),
+        ha="center",
+        fontsize=8,
+        color="#C44E52",
+        fontweight="bold",
+    )
 
 # Combined legend
 lines1, labels1 = ax1.get_legend_handles_labels()
@@ -129,7 +162,7 @@ print("Saved: prune_ckpt/map_comparison_line.png")
 print("\n" + "=" * 65)
 print(f"{'Experiment':<12} {'mAP50 (%)':<14} {'mAP50-95 (%)':<14} {'vs FT (mAP50-95)'}")
 print("=" * 65)
-for label in temp_labels + [ft_label]:
+for label in [*temp_labels, ft_label]:
     diff = best_map50_95[label] - ft_map50_95
     sign = "+" if diff >= 0 else ""
     marker = " <-- best" if best_map50_95[label] == max(all_map50_95) else ""
